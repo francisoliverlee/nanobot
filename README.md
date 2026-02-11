@@ -163,6 +163,46 @@ vllm serve meta-llama/Llama-3.1-8B-Instruct --port 8000
 nanobot agent -m "Hello from my local LLM!"
 ```
 
+## 🖥️ Local Models (Ollama)
+
+Run nanobot with Ollama - a popular local LLM deployment tool.
+
+**1. Start your Ollama server**
+
+```bash
+# Install Ollama first if not installed
+# Visit https://ollama.ai/download for installation instructions
+
+# Pull a model
+ollama pull llama3.1
+
+# Ollama server runs automatically on http://localhost:11434
+```
+
+**2. Configure** (`~/.nanobot/config.json`)
+
+```json
+{
+  "providers": {
+    "ollama": {
+      "apiKey": "dummy",
+      "apiBase": "http://localhost:11434"
+    }
+  },
+  "agents": {
+    "defaults": {
+      "model": "llama3.1"
+    }
+  }
+}
+```
+
+**3. Chat**
+
+```bash
+nanobot agent -m "Hello from my Ollama LLM!"
+```
+
 > [!TIP]
 > The `apiKey` can be any non-empty string for local servers that don't require authentication.
 
@@ -573,17 +613,6 @@ nanobot gateway
 
 </details>
 
-## 🌐 Agent Social Network
-
-🐈 nanobot is capable of linking to the agent social network (agent community). **Just send one message and your nanobot joins automatically!**
-
-| Platform | How to Join (send this message to your bot) |
-|----------|-------------|
-| [**Moltbook**](https://www.moltbook.com/) | `Read https://moltbook.com/skill.md and follow the instructions to join Moltbook` |
-| [**ClawdChat**](https://clawdchat.ai/) | `Read https://clawdchat.ai/skill.md and follow the instructions to join ClawdChat` |
-
-Simply send the command above to your nanobot (via CLI or any chat channel), and it will handle the rest.
-
 ## ⚙️ Configuration
 
 Config file: `~/.nanobot/config.json`
@@ -609,6 +638,7 @@ Config file: `~/.nanobot/config.json`
 | `moonshot` | LLM (Moonshot/Kimi) | [platform.moonshot.cn](https://platform.moonshot.cn) |
 | `zhipu` | LLM (Zhipu GLM) | [open.bigmodel.cn](https://open.bigmodel.cn) |
 | `vllm` | LLM (local, any OpenAI-compatible server) | — |
+| `ollama` | LLM (local, Ollama server) | — |
 
 <details>
 <summary><b>Adding a New Provider (Developer Guide)</b></summary>
@@ -664,6 +694,39 @@ That's it! Environment variables, model prefixing, config matching, and `nanobot
 | `tools.restrictToWorkspace` | `false` | When `true`, restricts **all** agent tools (shell, file read/write/edit, list) to the workspace directory. Prevents path traversal and out-of-scope access. |
 | `channels.*.allowFrom` | `[]` (allow all) | Whitelist of user IDs. Empty = allow everyone; non-empty = only listed users can interact. |
 
+### MCP (Model Context Protocol)
+
+> MCP allows nanobot to connect to external services and data sources through specialized servers.
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `mcp.servers.*.enabled` | `false` | Enable/disable specific MCP servers |
+| `mcp.servers.*.server_url` | `""` | URL of the MCP server |
+| `mcp.servers.*.auth_token` | `""` | Authentication token for the MCP server |
+| `mcp.auto_discover` | `true` | Automatically discover MCP servers |
+| `mcp.discovery_path` | `~/.mcp/servers` | Path to look for MCP server configurations |
+
+**Available MCP Tools:**
+
+- `use_mcp_tool` - Call tools provided by connected MCP servers
+- `mcp_knowledge_search` - Search knowledge bases via MCP servers
+
+**Example Configuration:**
+
+```json
+{
+  "mcp": {
+    "servers": {
+      "knowledge_server": {
+        "enabled": true,
+        "server_url": "http://localhost:8080",
+        "auth_token": "your-auth-token-here"
+      }
+    }
+  }
+}
+```
+
 
 ## CLI Reference
 
@@ -680,6 +743,38 @@ That's it! Environment variables, model prefixing, config matching, and `nanobot
 | `nanobot channels status` | Show channel status |
 
 Interactive mode exits: `exit`, `quit`, `/exit`, `/quit`, `:q`, or `Ctrl+D`.
+
+## Knowledge Base
+
+> Local knowledge base system for storing and managing domain-specific knowledge, especially for RocketMQ troubleshooting and configuration guides.
+
+### Available Knowledge Tools
+
+- `knowledge_search` - Search the knowledge base for specific information
+- `knowledge_add` - Add new knowledge entries to the knowledge base
+- `knowledge_rocketmq` - Specialized RocketMQ knowledge management
+- `knowledge_export` - Export knowledge base for backup
+
+### RocketMQ Knowledge Support
+
+The knowledge base includes specialized support for RocketMQ with:
+
+- **Troubleshooting Guides**: Message sending failures, consumer group issues, network problems
+- **Configuration Guides**: Broker configuration, performance tuning, best practices
+- **Diagnostic Tools**: Topic validity checkers, consumer group validators
+
+### Example Usage
+
+```bash
+# Run the RocketMQ knowledge demo
+python examples/rocketmq_knowledge_demo.py
+
+# Search for RocketMQ troubleshooting guides
+nanobot agent -m "搜索RocketMQ消息发送失败的排查指南"
+
+# Add new knowledge
+nanobot agent -m "添加一条关于RocketMQ消费者组配置的知识"
+```
 
 <details>
 <summary><b>Scheduled Tasks (Cron)</b></summary>

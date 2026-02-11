@@ -18,6 +18,8 @@ from nanobot.agent.tools.web import WebSearchTool, WebFetchTool
 from nanobot.agent.tools.message import MessageTool
 from nanobot.agent.tools.spawn import SpawnTool
 from nanobot.agent.tools.cron import CronTool
+from nanobot.agent.tools.mcp import MCPTool, MCPKnowledgeSearchTool
+from nanobot.agent.tools.knowledge import KnowledgeSearchTool, KnowledgeAddTool, DomainKnowledgeTool, KnowledgeExportTool
 from nanobot.agent.subagent import SubagentManager
 from nanobot.session.manager import SessionManager
 
@@ -106,6 +108,16 @@ class AgentLoop:
         # Cron tool (for scheduling)
         if self.cron_service:
             self.tools.register(CronTool(self.cron_service))
+        
+        # MCP tools (for Model Context Protocol integration)
+        self.tools.register(MCPTool())
+        self.tools.register(MCPKnowledgeSearchTool())
+        
+        # Knowledge base tools (for local knowledge storage and retrieval)
+        self.tools.register(KnowledgeSearchTool())
+        self.tools.register(KnowledgeAddTool())
+        self.tools.register(DomainKnowledgeTool())
+        self.tools.register(KnowledgeExportTool())
     
     async def run(self) -> None:
         """Run the agent loop, processing messages from the bus."""

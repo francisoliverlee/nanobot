@@ -1,7 +1,8 @@
 """Configuration schema using Pydantic."""
 
 from pathlib import Path
-from pydantic import BaseModel, Field, ConfigDict
+from typing import Optional, Union
+from pydantic import BaseModel, Field
 from pydantic_settings import BaseSettings
 
 
@@ -17,7 +18,7 @@ class TelegramConfig(BaseModel):
     enabled: bool = False
     token: str = ""  # Bot token from @BotFather
     allow_from: list[str] = Field(default_factory=list)  # Allowed user IDs or usernames
-    proxy: str | None = None  # HTTP/SOCKS5 proxy URL, e.g. "http://127.0.0.1:7890" or "socks5://127.0.0.1:1080"
+    proxy: Optional[str] = None  # HTTP/SOCKS5 proxy URL, e.g. "http://127.0.0.1:7890" or "socks5://127.0.0.1:1080"
 
 
 class FeishuConfig(BaseModel):
@@ -171,8 +172,8 @@ class AgentsConfig(BaseModel):
 class ProviderConfig(BaseModel):
     """LLM provider configuration."""
     api_key: str = ""
-    api_base: str | None = None
-    extra_headers: dict[str, str] | None = None  # Custom headers (e.g. APP-Code for AiHubMix)
+    api_base: Optional[str] = None
+    extra_headers: Optional[dict[str, str]] = None  # Custom headers (e.g. APP-Code for AiHubMix)
 
 
 class ProvidersConfig(BaseModel):
@@ -189,6 +190,22 @@ class ProvidersConfig(BaseModel):
     moonshot: ProviderConfig = Field(default_factory=ProviderConfig)
     minimax: ProviderConfig = Field(default_factory=ProviderConfig)
     aihubmix: ProviderConfig = Field(default_factory=ProviderConfig)  # AiHubMix API gateway
+    ollama: ProviderConfig = Field(default_factory=ProviderConfig)  # Ollama local deployment
+
+
+class MCPConnectionConfig(BaseModel):
+    """MCP server connection configuration."""
+    server_name: str = ""  # MCP服务器名称
+    server_url: str = ""  # MCP服务器URL
+    auth_token: str = ""  # 认证令牌
+    enabled: bool = False  # 是否启用
+
+
+class MCPConfig(BaseModel):
+    """MCP (Model Context Protocol) configuration."""
+    servers: dict[str, MCPConnectionConfig] = Field(default_factory=dict)  # MCP服务器配置
+    auto_discover: bool = True  # 是否自动发现本地MCP服务器
+    discovery_path: str = "~/.mcp/servers"  # MCP服务器发现路径
 
 
 class GatewayConfig(BaseModel):
@@ -227,13 +244,14 @@ class Config(BaseSettings):
     providers: ProvidersConfig = Field(default_factory=ProvidersConfig)
     gateway: GatewayConfig = Field(default_factory=GatewayConfig)
     tools: ToolsConfig = Field(default_factory=ToolsConfig)
+    mcp: MCPConfig = Field(default_factory=MCPConfig)
     
     @property
     def workspace_path(self) -> Path:
         """Get expanded workspace path."""
         return Path(self.agents.defaults.workspace).expanduser()
     
-    def _match_provider(self, model: str | None = None) -> tuple["ProviderConfig | None", str | None]:
+    def _match_provider(self, model: Optional[str] = None) -> tuple[Optional["ProviderConfig"], Optional[str]]:
         """Match provider config and its registry name. Returns (config, spec_name)."""
         from nanobot.providers.registry import PROVIDERS
         model_lower = (model or self.agents.defaults.model).lower()
@@ -251,22 +269,22 @@ class Config(BaseSettings):
                 return p, spec.name
         return None, None
 
-    def get_provider(self, model: str | None = None) -> ProviderConfig | None:
+    def get_provider(self, model: Optional[str] = None) -> Optional[ProviderConfig]:
         """Get matched provider config (api_key, api_base, extra_headers). Falls back to first available."""
         p, _ = self._match_provider(model)
         return p
 
-    def get_provider_name(self, model: str | None = None) -> str | None:
+    def get_provider_name(self, model: Optional[str] = None) -> Optional[str]:
         """Get the registry name of the matched provider (e.g. "deepseek", "openrouter")."""
         _, name = self._match_provider(model)
         return name
 
-    def get_api_key(self, model: str | None = None) -> str | None:
+    def get_api_key(self, model: Optional[str] = None) -> Optional[str]:
         """Get API key for the given model. Falls back to first available key."""
         p = self.get_provider(model)
         return p.api_key if p else None
     
-    def get_api_base(self, model: str | None = None) -> str | None:
+    def get_api_base(self, model: Optional[str] = None) -> Optional[str]:
         """Get API base URL for the given model. Applies default URLs for known gateways."""
         from nanobot.providers.registry import find_by_name
         p, name = self._match_provider(model)
@@ -281,7 +299,6 @@ class Config(BaseSettings):
                 return spec.default_api_base
         return None
     
-    model_config = ConfigDict(
-        env_prefix="NANOBOT_",
-        env_nested_delimiter="__"
-    )
+    class Config:
+        env_prefix = "NANOBOT_"
+        env_nested_delimiter = "__"
