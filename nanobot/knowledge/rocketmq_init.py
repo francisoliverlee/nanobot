@@ -63,17 +63,25 @@ def parse_markdown_file(file_path: Path) -> Dict[str, Any]:
 def get_knowledge_categories(base_path: Path) -> Dict[str, List[Dict]]:
     """Organize knowledge files by category based on directory structure."""
     knowledge_dir = base_path / "knowledge"
+    print(f"[DEBUG] 基础路径: {base_path}")
+    print(f"[DEBUG] 知识目录: {knowledge_dir}")
+    print(f"[DEBUG] 知识目录存在: {knowledge_dir.exists()}")
+    
     if not knowledge_dir.exists():
+        print("[DEBUG] 知识目录不存在，返回空字典")
         return {}
     
     categories = {}
     
     # Find all date-based directories (e.g., 2026-02-12-01)
     date_dirs = [d for d in knowledge_dir.iterdir() if d.is_dir() and re.match(r'\d{4}-\d{2}-\d{2}-\d{2}', d.name)]
+    print(f"找到日期目录: {[d.name for d in date_dirs]}")
     
     for date_dir in date_dirs:
+        print(f"处理日期目录: {date_dir.name}")
         # Find all category directories
         category_dirs = [d for d in date_dir.iterdir() if d.is_dir() and not d.name.startswith('_')]
+        print(f"找到分类目录: {[d.name for d in category_dirs]}")
         
         for category_dir in category_dirs:
             category_name = category_dir.name

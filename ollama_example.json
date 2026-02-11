@@ -2,7 +2,7 @@
   "providers": {
     "ollama": {
       "apiKey": "dummy",
-      "apiBase": "http://9.134.241.105:11434"
+      "apiBase": "http://127.0.0.1:11434"
     }
   },
   "agents": {

@@ -40,6 +40,26 @@ def test_category_loading():
     print("=== 测试知识分类加载 ===")
     
     base_path = Path(__file__).parent
+    
+    # 调试信息：检查knowledge目录是否存在
+    knowledge_dir = base_path / "nanobot" / "knowledge"
+    print(f"检查目录: {knowledge_dir}")
+    print(f"目录存在: {knowledge_dir.exists()}")
+    
+    if knowledge_dir.exists():
+        print("目录内容:")
+        for item in knowledge_dir.iterdir():
+            print(f"  - {item.name} ({'目录' if item.is_dir() else '文件'})")
+        
+        # 调试正则表达式匹配
+        import re
+        pattern = r'\d{4}-\d{2}-\d{2}-\d{2}'
+        print("正则表达式调试:")
+        for item in knowledge_dir.iterdir():
+            if item.is_dir():
+                match = re.match(pattern, item.name)
+                print(f"  - {item.name}: 匹配结果={match is not None}")
+    
     categories = get_knowledge_categories(base_path)
     
     if categories:

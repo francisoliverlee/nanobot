@@ -1,8 +1,7 @@
 """Configuration schema using Pydantic."""
 
 from pathlib import Path
-from typing import Optional, Union
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict
 from pydantic_settings import BaseSettings
 
 
@@ -18,7 +17,7 @@ class TelegramConfig(BaseModel):
     enabled: bool = False
     token: str = ""  # Bot token from @BotFather
     allow_from: list[str] = Field(default_factory=list)  # Allowed user IDs or usernames
-    proxy: Optional[str] = None  # HTTP/SOCKS5 proxy URL, e.g. "http://127.0.0.1:7890" or "socks5://127.0.0.1:1080"
+    proxy: str | None = None  # HTTP/SOCKS5 proxy URL, e.g. "http://127.0.0.1:7890" or "socks5://127.0.0.1:1080"
 
 
 class FeishuConfig(BaseModel):
@@ -172,8 +171,8 @@ class AgentsConfig(BaseModel):
 class ProviderConfig(BaseModel):
     """LLM provider configuration."""
     api_key: str = ""
-    api_base: Optional[str] = None
-    extra_headers: Optional[dict[str, str]] = None  # Custom headers (e.g. APP-Code for AiHubMix)
+    api_base: str | None = None
+    extra_headers: dict[str, str] | None = None  # Custom headers (e.g. APP-Code for AiHubMix)
 
 
 class ProvidersConfig(BaseModel):
@@ -251,7 +250,7 @@ class Config(BaseSettings):
         """Get expanded workspace path."""
         return Path(self.agents.defaults.workspace).expanduser()
     
-    def _match_provider(self, model: Optional[str] = None) -> tuple[Optional["ProviderConfig"], Optional[str]]:
+    def _match_provider(self, model: str | None = None) -> tuple["ProviderConfig | None", str | None]:
         """Match provider config and its registry name. Returns (config, spec_name)."""
         from nanobot.providers.registry import PROVIDERS
         model_lower = (model or self.agents.defaults.model).lower()
@@ -269,22 +268,22 @@ class Config(BaseSettings):
                 return p, spec.name
         return None, None
 
-    def get_provider(self, model: Optional[str] = None) -> Optional[ProviderConfig]:
+    def get_provider(self, model: str | None = None) -> ProviderConfig | None:
         """Get matched provider config (api_key, api_base, extra_headers). Falls back to first available."""
         p, _ = self._match_provider(model)
         return p
 
-    def get_provider_name(self, model: Optional[str] = None) -> Optional[str]:
+    def get_provider_name(self, model: str | None = None) -> str | None:
         """Get the registry name of the matched provider (e.g. "deepseek", "openrouter")."""
         _, name = self._match_provider(model)
         return name
 
-    def get_api_key(self, model: Optional[str] = None) -> Optional[str]:
+    def get_api_key(self, model: str | None = None) -> str | None:
         """Get API key for the given model. Falls back to first available key."""
         p = self.get_provider(model)
         return p.api_key if p else None
     
-    def get_api_base(self, model: Optional[str] = None) -> Optional[str]:
+    def get_api_base(self, model: str | None = None) -> str | None:
         """Get API base URL for the given model. Applies default URLs for known gateways."""
         from nanobot.providers.registry import find_by_name
         p, name = self._match_provider(model)
@@ -299,6 +298,7 @@ class Config(BaseSettings):
                 return spec.default_api_base
         return None
     
-    class Config:
-        env_prefix = "NANOBOT_"
-        env_nested_delimiter = "__"
+    model_config = ConfigDict(
+        env_prefix="NANOBOT_",
+        env_nested_delimiter="__"
+    )
