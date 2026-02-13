@@ -94,30 +94,30 @@ class AgentLoop:
         ))
         
         # Web tools
-        self.tools.register(WebSearchTool(api_key=self.brave_api_key))
-        self.tools.register(WebFetchTool())
+        # self.tools.register(WebSearchTool(api_key=self.brave_api_key))
+        # self.tools.register(WebFetchTool())
         
         # Message tool
-        message_tool = MessageTool(send_callback=self.bus.publish_outbound)
-        self.tools.register(message_tool)
+        # message_tool = MessageTool(send_callback=self.bus.publish_outbound)
+        # self.tools.register(message_tool)
         
         # Spawn tool (for subagents)
-        spawn_tool = SpawnTool(manager=self.subagents)
-        self.tools.register(spawn_tool)
+        # spawn_tool = SpawnTool(manager=self.subagents)
+        # self.tools.register(spawn_tool)
         
         # Cron tool (for scheduling)
-        if self.cron_service:
-            self.tools.register(CronTool(self.cron_service))
+        # if self.cron_service:
+        #     self.tools.register(CronTool(self.cron_service))
         
         # MCP tools (for Model Context Protocol integration)
-        self.tools.register(MCPTool())
-        self.tools.register(MCPKnowledgeSearchTool())
+        # self.tools.register(MCPTool())
+        # self.tools.register(MCPKnowledgeSearchTool())
         
         # Knowledge base tools (for local knowledge storage and retrieval)
-        self.tools.register(KnowledgeSearchTool())
-        self.tools.register(KnowledgeAddTool())
-        self.tools.register(DomainKnowledgeTool())
-        self.tools.register(KnowledgeExportTool())
+        # self.tools.register(KnowledgeSearchTool())
+        # self.tools.register(KnowledgeAddTool())
+        # self.tools.register(DomainKnowledgeTool())
+        # self.tools.register(KnowledgeExportTool())
     
     async def run(self) -> None:
         """Run the agent loop, processing messages from the bus."""
