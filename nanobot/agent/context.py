@@ -19,6 +19,7 @@ class ContextBuilder:
     """
     
     BOOTSTRAP_FILES = ["AGENTS.md", "SOUL.md", "USER.md", "TOOLS.md", "IDENTITY.md"]
+    PROMPT_DIR = "prompt"  # 自定义提示词目录
     
     def __init__(self, workspace: Path):
         self.workspace = workspace
@@ -44,6 +45,11 @@ class ContextBuilder:
         bootstrap = self._load_bootstrap_files()
         if bootstrap:
             parts.append(bootstrap)
+        
+        # Custom prompts from workspace/prompt directory
+        custom_prompts = self._load_custom_prompts()
+        if custom_prompts:
+            parts.append(custom_prompts)
         
         # Memory context
         memory = self.memory.get_memory_context()
@@ -117,6 +123,40 @@ When remembering something, write to {workspace_path}/memory/MEMORY.md"""
                 parts.append(f"## {filename}\n\n{content}")
         
         return "\n\n".join(parts) if parts else ""
+    
+    def _load_custom_prompts(self) -> str:
+        """
+        Load custom prompt files from workspace/prompt directory.
+        
+        Supports .md and .txt files. Files are loaded in alphabetical order.
+        This allows users to add domain-specific prompts, role definitions,
+        or additional context without modifying core files.
+        
+        Returns:
+            Formatted custom prompts content.
+        """
+        from loguru import logger
+        
+        prompt_dir = self.workspace / self.PROMPT_DIR
+        if not prompt_dir.exists() or not prompt_dir.is_dir():
+            return ""
+        
+        parts = []
+        prompt_files = sorted(prompt_dir.glob("*.md")) + sorted(prompt_dir.glob("*.txt"))
+        
+        for prompt_file in prompt_files:
+            try:
+                content = prompt_file.read_text(encoding="utf-8")
+                # 使用文件名（不含扩展名）作为标题
+                title = prompt_file.stem
+                parts.append(f"## Custom Prompt: {title}\n\n{content}")
+                logger.info(f"[CONTEXT] 📄 Loaded custom prompt: {prompt_file.name}")
+            except Exception as e:
+                logger.warning(f"[CONTEXT] ⚠️  Failed to load prompt file {prompt_file.name}: {e}")
+        
+        if parts:
+            return f"# Custom Prompts\n\n" + "\n\n".join(parts)
+        return ""
     
     def build_messages(
         self,

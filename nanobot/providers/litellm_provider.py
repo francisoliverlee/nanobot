@@ -2,10 +2,12 @@
 
 import json
 import os
+import time
 from typing import Any
 
 import litellm
 from litellm import acompletion
+from loguru import logger
 
 from nanobot.providers.base import LLMProvider, LLMResponse, ToolCallRequest
 from nanobot.providers.registry import find_by_model, find_gateway
@@ -148,10 +150,31 @@ class LiteLLMProvider(LLMProvider):
             kwargs["tools"] = tools
             kwargs["tool_choice"] = "auto"
         
+        # 记录LLM入参
+        logger.info(f"[LLM] 调用模型: {model}")
+        logger.info(f"[LLM] 入参: {json.dumps(kwargs, ensure_ascii=False)}")
+        
+        # 记录开始时间
+        start_time = time.time()
+        
         try:
             response = await acompletion(**kwargs)
+            
+            # 计算耗时
+            end_time = time.time()
+            duration = end_time - start_time
+            
+            # 记录LLM出参和耗时
+            logger.info(f"[LLM] 调用耗时: {duration:.3f}秒")
+            logger.info(f"[LLM] 出参: {json.dumps(response.model_dump() if hasattr(response, 'model_dump') else str(response), ensure_ascii=False)}")
+            
             return self._parse_response(response)
         except Exception as e:
+            # 计算失败时的耗时
+            end_time = time.time()
+            duration = end_time - start_time
+            
+            logger.error(f"[LLM] 调用失败，耗时: {duration:.3f}秒，错误: {str(e)}")
             # Return error as content for graceful handling
             return LLMResponse(
                 content=f"Error calling LLM: {str(e)}",
