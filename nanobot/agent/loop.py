@@ -202,13 +202,17 @@ class AgentLoop:
         
         while iteration < self.max_iterations:
             iteration += 1
-            
+
+            logger.info(f"Agent iteration {iteration} starting, call llm with {len(messages)} messages in context")
+            logger.info(f"Messages in context: {messages}")
             # Call LLM
             response = await self.provider.chat(
                 messages=messages,
                 tools=self.tools.get_definitions(),
                 model=self.model
             )
+
+            logger.info(f"LLM response: {response.content}...")
             
             # Handle tool calls
             if response.has_tool_calls:

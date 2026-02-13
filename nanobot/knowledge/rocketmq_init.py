@@ -112,16 +112,39 @@ def get_knowledge_categories(base_path: Path) -> Dict[str, List[Dict]]:
 class RocketMQKnowledgeInitializer:
     """Initializer for built-in RocketMQ knowledge."""
     
-    def __init__(self, knowledge_store: KnowledgeStore):
+    def __init__(self, knowledge_store):
+        """初始化 RocketMQ 知识初始化器.
+        
+        Args:
+            knowledge_store: KnowledgeStore 或 ChromaKnowledgeStore 实例
+        """
         self.store = knowledge_store
         self.domain = "rocketmq"
-        self.manager = DomainKnowledgeManager(knowledge_store, self.domain)
         self.initialized_count = 0
-        self.base_path = knowledge_store.workspace.parent if hasattr(knowledge_store, 'workspace') else Path.cwd()
+        self.chunk_count = 0
+        
+        # 检测是否为 ChromaKnowledgeStore（支持向量化）
+        self.is_chroma_store = hasattr(knowledge_store, 'embedder') and hasattr(knowledge_store, 'chunker')
+        
+        # 如果是旧的 KnowledgeStore，使用 DomainKnowledgeManager
+        if not self.is_chroma_store:
+            self.manager = DomainKnowledgeManager(knowledge_store, self.domain)
+        
+        # 获取基础路径
+        if hasattr(knowledge_store, 'workspace'):
+            self.base_path = knowledge_store.workspace.parent
+        else:
+            self.base_path = Path.cwd()
     
-    def initialize(self) -> int:
-        """Initialize built-in RocketMQ knowledge from file system."""
+    def initialize(self):
+        """Initialize built-in RocketMQ knowledge from file system.
+        
+        Returns:
+            如果是 ChromaKnowledgeStore: (item_count, chunk_count)
+            如果是旧的 KnowledgeStore: item_count
+        """
         self.initialized_count = 0
+        self.chunk_count = 0
         
         # Load knowledge from file system
         categories = get_knowledge_categories(self.base_path)
@@ -133,7 +156,10 @@ class RocketMQKnowledgeInitializer:
             # Initialize from file system
             self._initialize_from_filesystem(categories)
         
-        return self.initialized_count
+        if self.is_chroma_store:
+            return self.initialized_count, self.chunk_count
+        else:
+            return self.initialized_count
     
     def _increment_count(self) -> None:
         """Increment the initialization counter."""
@@ -146,33 +172,141 @@ class RocketMQKnowledgeInitializer:
                 # Determine knowledge type based on category and content
                 knowledge_type = self._determine_knowledge_type(category_name, item["content"])
                 
-                if knowledge_type == "troubleshooting":
-                    self.manager.add_troubleshooting_guide(
-                        title=item["title"],
-                        content=item["content"],
-                        tags=item["tags"]
-                    )
-                elif knowledge_type == "configuration":
-                    self.manager.add_configuration_guide(
-                        title=item["title"],
-                        content=item["content"],
-                        tags=item["tags"]
-                    )
-                elif knowledge_type == "best_practice":
-                    self.manager.add_best_practice(
+                if self.is_chroma_store:
+                    # 使用向量化存储
+                    self._add_knowledge_with_vectorization(
+                        knowledge_type=knowledge_type,
                         title=item["title"],
                         content=item["content"],
                         tags=item["tags"]
                     )
                 else:
-                    # Default to troubleshooting guide
-                    self.manager.add_troubleshooting_guide(
-                        title=item["title"],
-                        content=item["content"],
-                        tags=item["tags"]
-                    )
+                    # 使用旧的存储方式
+                    if knowledge_type == "troubleshooting":
+                        self.manager.add_troubleshooting_guide(
+                            title=item["title"],
+                            content=item["content"],
+                            tags=item["tags"]
+                        )
+                    elif knowledge_type == "configuration":
+                        self.manager.add_configuration_guide(
+                            title=item["title"],
+                            content=item["content"],
+                            tags=item["tags"]
+                        )
+                    elif knowledge_type == "best_practice":
+                        self.manager.add_best_practice(
+                            title=item["title"],
+                            content=item["content"],
+                            tags=item["tags"]
+                        )
+                    else:
+                        # Default to troubleshooting guide
+                        self.manager.add_troubleshooting_guide(
+                            title=item["title"],
+                            content=item["content"],
+                            tags=item["tags"]
+                        )
                 
                 self._increment_count()
+    
+    def _add_knowledge_with_vectorization(
+        self, 
+        knowledge_type: str, 
+        title: str, 
+        content: str, 
+        tags: List[str]
+    ) -> None:
+        """添加知识并进行向量化存储.
+        
+        Args:
+            knowledge_type: 知识类型（troubleshooting, configuration, best_practice）
+            title: 标题
+            content: 内容
+            tags: 标签列表
+        """
+        from datetime import datetime
+        import logging
+        
+        logger = logging.getLogger("nanobot.knowledge.rocketmq_init")
+        
+        # 生成唯一 ID
+        timestamp = datetime.now().strftime("%Y%m%d%H%M%S%f")
+        item_id = f"{self.domain}_{timestamp}"
+        
+        # 确定优先级
+        priority_map = {
+            "troubleshooting": 3,
+            "configuration": 2,
+            "best_practice": 4
+        }
+        priority = priority_map.get(knowledge_type, 2)
+        
+        # 准备元数据
+        metadata = {
+            "item_id": item_id,
+            "domain": self.domain,
+            "category": knowledge_type,
+            "title": title,
+            "tags": tags,
+            "source": "system",
+            "priority": priority,
+            "created_at": datetime.now().isoformat(),
+            "updated_at": datetime.now().isoformat()
+        }
+        
+        try:
+            # 1. 文本分块
+            chunks = self.store.chunker.chunk_text(content, metadata)
+            
+            if not chunks:
+                logger.warning(f"知识条目 {item_id} 分块后为空，跳过")
+                return
+            
+            # 2. 批量向量化
+            chunk_texts = [chunk["text"] for chunk in chunks]
+            try:
+                embeddings = self.store.embedder.embed_batch(chunk_texts)
+            except Exception as e:
+                logger.error(f"知识条目 {item_id} 向量化失败: {str(e)}")
+                return
+            
+            # 3. 存储到 Chroma
+            collection = self.store._get_or_create_collection(self.domain)
+            
+            # 准备批量插入的数据
+            ids = []
+            documents = []
+            metadatas = []
+            embeddings_list = []
+            
+            for i, (chunk, embedding) in enumerate(zip(chunks, embeddings)):
+                chunk_id = f"{item_id}_chunk_{i}"
+                ids.append(chunk_id)
+                documents.append(chunk["text"])
+                metadatas.append(chunk["metadata"])
+                embeddings_list.append(embedding)
+            
+            # 批量插入到 Chroma
+            collection.add(
+                ids=ids,
+                documents=documents,
+                metadatas=metadatas,
+                embeddings=embeddings_list
+            )
+            
+            # 更新分块计数
+            self.chunk_count += len(chunks)
+            
+            logger.debug(
+                f"知识条目 {item_id} 已添加: {len(chunks)} 个分块"
+            )
+            
+        except Exception as e:
+            logger.error(
+                f"添加知识条目 {item_id} 失败: {str(e)}",
+                exc_info=True
+            )
     
     def _determine_knowledge_type(self, category_name: str, content: str) -> str:
         """Determine the type of knowledge based on category and content."""
@@ -197,11 +331,24 @@ class RocketMQKnowledgeInitializer:
     def _initialize_embedded_knowledge(self) -> None:
         """Fallback to embedded knowledge if no files found."""
         # Add basic troubleshooting guide as fallback
-        self.manager.add_troubleshooting_guide(
-            title="RocketMQ知识库初始化",
-            content="RocketMQ知识库已从文件系统加载。如果未找到知识文件，请检查knowledge目录结构。",
-            tags=["初始化", "RocketMQ", "知识库"]
-        )
+        title = "RocketMQ知识库初始化"
+        content = "RocketMQ知识库已从文件系统加载。如果未找到知识文件，请检查knowledge目录结构。"
+        tags = ["初始化", "RocketMQ", "知识库"]
+        
+        if self.is_chroma_store:
+            self._add_knowledge_with_vectorization(
+                knowledge_type="troubleshooting",
+                title=title,
+                content=content,
+                tags=tags
+            )
+        else:
+            self.manager.add_troubleshooting_guide(
+                title=title,
+                content=content,
+                tags=tags
+            )
+        
         self._increment_count()
     
     # 硬编码的知识内容已被移除，改为从文件系统读取knowledge目录中的知识文件
