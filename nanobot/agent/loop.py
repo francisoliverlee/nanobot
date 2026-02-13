@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import re
 from pathlib import Path
 from typing import Any
 
@@ -48,6 +49,7 @@ class AgentLoop:
         cron_service: "CronService | None" = None,
         restrict_to_workspace: bool = False,
         session_manager: SessionManager | None = None,
+        custom_prompt: str | None = None,
     ):
         from nanobot.config.schema import ExecToolConfig
         from nanobot.cron.service import CronService
@@ -76,22 +78,27 @@ class AgentLoop:
         
         self._running = False
         self._register_default_tools()
+
+        self.custom_prompt = custom_prompt
+        if self.custom_prompt:
+            logger.info("Custom prompt provided, using it instead of default context builder")
     
     def _register_default_tools(self) -> None:
         """Register the default set of tools."""
+        # Shell tool (register first to improve compatibility with models that
+        # emit placeholder tool names like function/function_1).
+        self.tools.register(ExecTool(
+            working_dir=str(self.workspace),
+            timeout=self.exec_config.timeout,
+            restrict_to_workspace=self.restrict_to_workspace,
+        ))
+
         # File tools (restrict to workspace if configured)
         allowed_dir = self.workspace if self.restrict_to_workspace else None
         self.tools.register(ReadFileTool(allowed_dir=allowed_dir))
         self.tools.register(WriteFileTool(allowed_dir=allowed_dir))
         self.tools.register(EditFileTool(allowed_dir=allowed_dir))
         self.tools.register(ListDirTool(allowed_dir=allowed_dir))
-        
-        # Shell tool
-        self.tools.register(ExecTool(
-            working_dir=str(self.workspace),
-            timeout=self.exec_config.timeout,
-            restrict_to_workspace=self.restrict_to_workspace,
-        ))
         
         # Web tools
         # self.tools.register(WebSearchTool(api_key=self.brave_api_key))
@@ -253,21 +260,30 @@ class AgentLoop:
                 
                 # Execute tools
                 for tool_call in response.tool_calls:
-                    args_str = json.dumps(tool_call.arguments, ensure_ascii=False)
-                    logger.info(f"[LOOP] 🔧 Executing tool: {tool_call.name}")
+                    tool_name, tool_args = self._repair_tool_call(
+                        tool_call.name,
+                        tool_call.arguments,
+                        msg.content,
+                    )
+                    args_str = json.dumps(tool_args, ensure_ascii=False)
+                    logger.info(f"[LOOP] 🔧 Executing tool: {tool_name}")
                     logger.info(f"[LOOP] 🔧 Tool arguments: {args_str[:500]}...")
                     
-                    result = await self.tools.execute(tool_call.name, tool_call.arguments)
+                    result = await self.tools.execute(tool_name, tool_args)
                     
                     result_preview = str(result)[:300] if result else "(empty result)"
                     logger.info(f"[LOOP] 🔧 Tool result: {result_preview}...")
                     
                     messages = self.context.add_tool_result(
-                        messages, tool_call.id, tool_call.name, result
+                        messages, tool_call.id, tool_name, result
                     )
             else:
                 # No tool calls, we're done
-                final_content = response.content
+                fallback_content = await self._fallback_exec_on_empty_response(
+                    msg.content,
+                    response.content,
+                )
+                final_content = fallback_content if fallback_content is not None else response.content
                 break
         
         if final_content is None:
@@ -365,11 +381,16 @@ class AgentLoop:
                 )
                 
                 for tool_call in response.tool_calls:
-                    args_str = json.dumps(tool_call.arguments, ensure_ascii=False)
-                    logger.info(f"Tool call: {tool_call.name}({args_str[:200]})")
-                    result = await self.tools.execute(tool_call.name, tool_call.arguments)
+                    tool_name, tool_args = self._repair_tool_call(
+                        tool_call.name,
+                        tool_call.arguments,
+                        msg.content,
+                    )
+                    args_str = json.dumps(tool_args, ensure_ascii=False)
+                    logger.info(f"Tool call: {tool_name}({args_str[:200]})")
+                    result = await self.tools.execute(tool_name, tool_args)
                     messages = self.context.add_tool_result(
-                        messages, tool_call.id, tool_call.name, result
+                        messages, tool_call.id, tool_name, result
                     )
             else:
                 final_content = response.content
@@ -388,6 +409,108 @@ class AgentLoop:
             chat_id=origin_chat_id,
             content=final_content
         )
+
+    def _repair_tool_call(
+        self,
+        name: str,
+        args: dict[str, Any] | Any,
+        user_text: str,
+    ) -> tuple[str, dict[str, Any] | Any]:
+        """Best-effort repair for malformed tool calls from small models."""
+        repaired_name = name
+        repaired_args = args
+
+        if not self.tools.has(repaired_name):
+            lowered = (repaired_name or "").lower()
+            if lowered == "function":
+                repaired_name = self.tools.tool_names[0] if self.tools.tool_names else repaired_name
+            else:
+                m = re.fullmatch(r"function_(\d+)", lowered)
+                if m:
+                    idx = int(m.group(1)) - 1
+                    names = self.tools.tool_names
+                    if 0 <= idx < len(names):
+                        repaired_name = names[idx]
+
+        if repaired_name == "exec" and isinstance(repaired_args, dict):
+            repaired_args = self._repair_exec_args(repaired_args, user_text)
+
+        return repaired_name, repaired_args
+
+    def _repair_exec_args(self, args: dict[str, Any], user_text: str) -> dict[str, Any]:
+        """Repair placeholder exec args like argument_1/value wrappers."""
+        command = args.get("command")
+        if isinstance(command, str) and command.strip() and not self._looks_like_placeholder_command(command):
+            return args
+
+        extracted: str | None = None
+        for key in ("argument_1", "arg_1", "input", "value"):
+            val = args.get(key)
+            if isinstance(val, str) and val.strip():
+                extracted = val.strip()
+                break
+            if isinstance(val, dict):
+                inner = val.get("value")
+                if isinstance(inner, str) and inner.strip():
+                    extracted = inner.strip()
+                    break
+
+        if extracted and not self._looks_like_placeholder_command(extracted):
+            repaired = {"command": extracted}
+            if "working_dir" in args:
+                repaired["working_dir"] = args["working_dir"]
+            return repaired
+
+        inferred = self._infer_exec_command_from_text(user_text, extracted or "")
+        if inferred:
+            repaired = {"command": inferred}
+            if "working_dir" in args:
+                repaired["working_dir"] = args["working_dir"]
+            return repaired
+
+        if extracted:
+            repaired = {"command": extracted}
+            if "working_dir" in args:
+                repaired["working_dir"] = args["working_dir"]
+            return repaired
+        return args
+
+    @staticmethod
+    def _looks_like_placeholder_command(command: str) -> bool:
+        token = command.strip().lower()
+        return bool(re.fullmatch(r"[a-z][a-z0-9_:-]{2,}", token)) and " " not in token
+
+    @staticmethod
+    def _infer_exec_command_from_text(user_text: str, hint: str = "") -> str | None:
+        text = f"{user_text} {hint}".lower()
+        if "broker" in text and "pod" in text:
+            return "kubectl get pods -Ao wide | grep ocloud-tdmq-rocketmq5-broker"
+        if ("namesrv" in text or "nameserver" in text) and "pod" in text:
+            return "kubectl get pods -Ao wide | grep ocloud-tdmq-rocketmq5-namesrv"
+        if "proxy" in text and "pod" in text:
+            return "kubectl get pods -Ao wide | grep ocloud-tdmq-rocketmq5-proxy"
+        if "rocketmq" in text and "pod" in text:
+            return "kubectl get pods -Ao wide | grep rocketmq | grep -v cmq"
+        return None
+
+    async def _fallback_exec_on_empty_response(
+        self,
+        user_text: str,
+        llm_content: str | None,
+    ) -> str | None:
+        """
+        Fallback for tiny models that return '{}' without emitting tool calls.
+        """
+        content = (llm_content or "").strip()
+        if content not in {"", "{}"}:
+            return None
+
+        command = self._infer_exec_command_from_text(user_text)
+        if not command:
+            return None
+
+        result = await self.tools.execute("exec", {"command": command})
+        return f"已执行命令:\n{command}\n\n结果:\n{result}"
     
     async def process_direct(
         self,

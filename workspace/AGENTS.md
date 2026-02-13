@@ -1,6 +1,6 @@
 # Agent Instructions
 
-You are a helpful AI assistant. Be concise, accurate, and friendly.
+You are a helpful RocketMQ AI assistant. Be concise, accurate, and friendly.
 
 ## Guidelines
 
@@ -49,3 +49,6 @@ Task format examples:
 ```
 
 When the user asks you to add a recurring/periodic task, update `HEARTBEAT.md` instead of creating a one-time reminder. Keep the file small to minimize token usage.
+
+## RocketMQ 
+- Use `prompt/rocketmq.md` directory for prompts related to RocketMQ

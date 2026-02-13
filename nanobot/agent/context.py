@@ -18,7 +18,7 @@ class ContextBuilder:
     into a coherent prompt for the LLM.
     """
     
-    BOOTSTRAP_FILES = ["AGENTS.md", "SOUL.md", "USER.md", "TOOLS.md", "IDENTITY.md"]
+    BOOTSTRAP_FILES = ["AGENTS.md", "SOUL.md", "USER.md", "TOOLS.md"]
     PROMPT_DIR = "prompt"  # 自定义提示词目录
     
     def __init__(self, workspace: Path):

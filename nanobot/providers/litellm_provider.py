@@ -2,6 +2,7 @@
 
 import json
 import os
+import re
 import time
 from typing import Any
 
@@ -168,7 +169,7 @@ class LiteLLMProvider(LLMProvider):
             logger.info(f"[LLM] 调用耗时: {duration:.3f}秒")
             logger.info(f"[LLM] 出参: {json.dumps(response.model_dump() if hasattr(response, 'model_dump') else str(response), ensure_ascii=False)}")
             
-            return self._parse_response(response)
+            return self._parse_response(response, tools)
         except Exception as e:
             # 计算失败时的耗时
             end_time = time.time()
@@ -181,7 +182,11 @@ class LiteLLMProvider(LLMProvider):
                 finish_reason="error",
             )
     
-    def _parse_response(self, response: Any) -> LLMResponse:
+    def _parse_response(
+        self,
+        response: Any,
+        tools: list[dict[str, Any]] | None = None,
+    ) -> LLMResponse:
         """Parse LiteLLM response into our standard format."""
         choice = response.choices[0]
         message = choice.message
@@ -196,10 +201,14 @@ class LiteLLMProvider(LLMProvider):
                         args = json.loads(args)
                     except json.JSONDecodeError:
                         args = {"raw": args}
-                
+
+                tool_name = tc.function.name
+                tool_name = self._normalize_tool_name(tool_name, tools)
+                args = self._normalize_tool_args(tool_name, args, tools)
+
                 tool_calls.append(ToolCallRequest(
                     id=tc.id,
-                    name=tc.function.name,
+                    name=tool_name,
                     arguments=args,
                 ))
         
@@ -220,6 +229,102 @@ class LiteLLMProvider(LLMProvider):
             usage=usage,
             reasoning_content=reasoning_content,
         )
+
+    @staticmethod
+    def _valid_tool_names(tools: list[dict[str, Any]] | None) -> list[str]:
+        if not tools:
+            return []
+        names: list[str] = []
+        for item in tools:
+            fn = item.get("function", {})
+            name = fn.get("name")
+            if isinstance(name, str) and name:
+                names.append(name)
+        return names
+
+    def _normalize_tool_name(
+        self,
+        name: str,
+        tools: list[dict[str, Any]] | None,
+    ) -> str:
+        valid_names = self._valid_tool_names(tools)
+        if name in valid_names:
+            return name
+
+        lowered = (name or "").strip().lower()
+        if not valid_names:
+            return name
+
+        # Some local models emit placeholders like "function" / "function_1".
+        if lowered == "function":
+            return valid_names[0]
+
+        m = re.fullmatch(r"function_(\d+)", lowered)
+        if m:
+            idx = int(m.group(1)) - 1
+            if 0 <= idx < len(valid_names):
+                return valid_names[idx]
+
+        if lowered in {"shell", "bash", "command"} and "exec" in valid_names:
+            return "exec"
+
+        if len(valid_names) == 1:
+            return valid_names[0]
+
+        return name
+
+    def _normalize_tool_args(
+        self,
+        tool_name: str,
+        args: Any,
+        tools: list[dict[str, Any]] | None,
+    ) -> Any:
+        if not isinstance(args, dict):
+            return args
+
+        tool_schema: dict[str, Any] | None = None
+        if tools:
+            for item in tools:
+                fn = item.get("function", {})
+                if fn.get("name") == tool_name:
+                    tool_schema = fn.get("parameters", {})
+                    break
+
+        if not tool_schema:
+            return args
+
+        properties: dict[str, Any] = tool_schema.get("properties", {}) or {}
+        prop_keys = list(properties.keys())
+        required = tool_schema.get("required", []) or []
+
+        # If already has any declared key, keep it.
+        if any(k in properties for k in args.keys()):
+            return args
+
+        def _unwrap(v: Any) -> Any:
+            if isinstance(v, dict) and "value" in v and len(v) == 1:
+                return v["value"]
+            return v
+
+        repaired: dict[str, Any] = {}
+        for k, v in args.items():
+            m = re.fullmatch(r"(?:arg(?:ument)?_?)(\d+)", str(k).lower())
+            if not m:
+                continue
+            idx = int(m.group(1)) - 1
+            if 0 <= idx < len(prop_keys):
+                repaired[prop_keys[idx]] = _unwrap(v)
+
+        if repaired:
+            return repaired
+
+        # If the tool expects exactly one required field, map the first value.
+        if len(required) == 1 and args:
+            only_key = required[0]
+            first_val = _unwrap(next(iter(args.values())))
+            return {only_key: first_val}
+
+        return args
     
     def get_default_model(self) -> str:
         """Get the default model."""
