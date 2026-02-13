@@ -9,7 +9,7 @@ import json
 import re
 from pathlib import Path
 from typing import Dict, List, Any, Optional
-from .store import KnowledgeStore, DomainKnowledgeManager
+from .store import LegacyKnowledgeStore, DomainKnowledgeManager
 
 # Version control for RocketMQ knowledge
 ROCKETMQ_KNOWLEDGE_VERSION = "1.0.0"
@@ -357,6 +357,6 @@ class RocketMQKnowledgeInitializer:
 
 def initialize_rocketmq_knowledge(workspace: Path) -> int:
     """Initialize built-in RocketMQ knowledge."""
-    store = KnowledgeStore(workspace)
+    store = LegacyKnowledgeStore(workspace)
     initializer = RocketMQKnowledgeInitializer(store)
     return initializer.initialize()

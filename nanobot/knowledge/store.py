@@ -9,14 +9,13 @@ from dataclasses import dataclass, asdict
 
 import chromadb
 from chromadb.config import Settings
+from loguru import logger
 
 from nanobot.utils.helpers import ensure_dir
 from .rag_config import RAGConfig
 from .vector_embedder import VectorEmbedder, EmbeddingModelError
 from .text_chunker import TextChunker
 
-
-logger = logging.getLogger("nanobot.knowledge.store")
 
 
 class RAGKnowledgeError(Exception):
@@ -61,7 +60,7 @@ class KnowledgeItem:
         return cls(**data)
 
 
-class KnowledgeStore:
+class LegacyKnowledgeStore:
     """Knowledge base storage system."""
     
     def __init__(self, workspace: Path):
@@ -661,18 +660,24 @@ class ChromaKnowledgeStore:
 
         # 如果没有提供 query，使用基于元数据的过滤检索（需求 6.5）
         if not query:
-            logger.info(f"执行元数据过滤检索: domain={domain}, category={category}, tags={tags}, top_k={top_k}")
+            logger.info(f"[KNOWLEDGE_STORE] 🔍 执行元数据过滤检索: domain={domain}, category={category}, tags={tags}, top_k={top_k}")
             return self._search_by_metadata(domain, category, tags, top_k)
 
         # 有 query 参数时，使用 RAG 语义检索（需求 6.4）
-        logger.info(f"开始语义检索: query='{query[:50]}...', domain={domain}, category={category}, tags={tags}, top_k={top_k}")
+        logger.info(f"[KNOWLEDGE_STORE] 🔍 开始语义检索:")
+        logger.info(f"[KNOWLEDGE_STORE]   - Query: '{query}'")
+        logger.info(f"[KNOWLEDGE_STORE]   - Domain: {domain}")
+        logger.info(f"[KNOWLEDGE_STORE]   - Category: {category}")
+        logger.info(f"[KNOWLEDGE_STORE]   - Tags: {tags}")
+        logger.info(f"[KNOWLEDGE_STORE]   - Top K: {top_k}")
 
         try:
             # 1. 向量化查询文本
             start_time = datetime.now()
+            logger.info(f"[KNOWLEDGE_STORE] 🧮 开始向量化查询文本...")
             query_vector = self.embedder.embed_text(query)
             vectorize_time = (datetime.now() - start_time).total_seconds()
-            logger.debug(f"查询向量化完成，耗时: {vectorize_time:.3f}秒")
+            logger.info(f"[KNOWLEDGE_STORE] ✅ 查询向量化完成，耗时: {vectorize_time:.3f}秒，向量维度: {len(query_vector)}")
 
             # 2. 构建元数据过滤条件
             where_filter = {}
@@ -710,9 +715,11 @@ class ChromaKnowledgeStore:
                     return []
 
             if not collections_to_search:
-                logger.warning("没有可搜索的集合")
+                logger.warning("[KNOWLEDGE_STORE] ⚠️  没有可搜索的集合")
                 return []
 
+            logger.info(f"[KNOWLEDGE_STORE] 📚 将在 {len(collections_to_search)} 个集合中搜索")
+            
             # 4. 在所有相关集合中执行相似度搜索
             all_results = []
             search_start = datetime.now()
@@ -757,7 +764,7 @@ class ChromaKnowledgeStore:
                     continue
 
             search_time = (datetime.now() - search_start).total_seconds()
-            logger.debug(f"相似度搜索完成，耗时: {search_time:.3f}秒，找到 {len(all_results)} 个结果")
+            logger.info(f"[KNOWLEDGE_STORE] 🔎 相似度搜索完成，耗时: {search_time:.3f}秒，找到 {len(all_results)} 个分块结果")
 
             # 5. 按相似度分数降序排序
             all_results.sort(key=lambda x: x["similarity_score"], reverse=True)
@@ -814,10 +821,14 @@ class ChromaKnowledgeStore:
                     continue
 
             total_time = (datetime.now() - start_time).total_seconds()
-            logger.info(
-                f"语义检索完成: 返回 {len(knowledge_items)} 个结果，"
-                f"总耗时: {total_time:.3f}秒"
-            )
+            logger.info(f"[KNOWLEDGE_STORE] ✅ 语义检索完成:")
+            logger.info(f"[KNOWLEDGE_STORE]   - 返回结果数: {len(knowledge_items)}")
+            logger.info(f"[KNOWLEDGE_STORE]   - 总耗时: {total_time:.3f}秒")
+            
+            # 记录前3个结果的标题和相似度
+            for i, item in enumerate(knowledge_items[:3], 1):
+                score = all_results[i-1]["similarity_score"] if i-1 < len(all_results) else 0
+                logger.info(f"[KNOWLEDGE_STORE]   {i}. {item.title[:50]} (相似度: {score:.4f})")
 
             return knowledge_items
 
@@ -1405,7 +1416,7 @@ class ChromaKnowledgeStore:
 class DomainKnowledgeManager:
     """Specialized knowledge manager for specific domains."""
     
-    def __init__(self, knowledge_store: Union[KnowledgeStore, "ChromaKnowledgeStore"], domain: str):
+    def __init__(self, knowledge_store: Union[LegacyKnowledgeStore, "ChromaKnowledgeStore"], domain: str):
         self.store = knowledge_store
         self.domain = domain
     
@@ -1526,3 +1537,8 @@ class DomainKnowledgeManager:
     def export_domain_knowledge(self) -> Dict[str, Any]:
         """Export all knowledge for the domain."""
         return self.store.export_knowledge(domain=self.domain)
+
+
+# 默认使用 ChromaKnowledgeStore（支持 RAG 向量检索）
+# 旧的 JSON 存储已重命名为 LegacyKnowledgeStore
+KnowledgeStore = ChromaKnowledgeStore

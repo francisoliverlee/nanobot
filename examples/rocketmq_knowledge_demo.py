@@ -7,7 +7,7 @@ This script demonstrates how to use the knowledge base system to store and retri
 
 import json
 from pathlib import Path
-from nanobot.knowledge.store import KnowledgeStore, DomainKnowledgeManager
+from nanobot.knowledge.store import LegacyKnowledgeStore, DomainKnowledgeManager
 
 
 def main():
@@ -15,7 +15,7 @@ def main():
     
     # Initialize knowledge store
     workspace = Path("workspace")
-    store = KnowledgeStore(workspace)
+    store = LegacyKnowledgeStore(workspace)
     rocketmq_manager = DomainKnowledgeManager(store, "rocketmq")
     
     print("=== RocketMQ Knowledge Base Demo ===\n")

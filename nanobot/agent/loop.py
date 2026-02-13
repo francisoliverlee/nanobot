@@ -170,6 +170,7 @@ class AgentLoop:
         
         preview = msg.content[:80] + "..." if len(msg.content) > 80 else msg.content
         logger.info(f"Processing message from {msg.channel}:{msg.sender_id}: {preview}")
+        logger.info(f"[LOOP] 📥 Received user message: {msg.content}")
         
         # Get or create session
         session = self.sessions.get_or_create(msg.session_key)
@@ -203,16 +204,33 @@ class AgentLoop:
         while iteration < self.max_iterations:
             iteration += 1
 
-            logger.info(f"Agent iteration {iteration} starting, call llm with {len(messages)} messages in context")
-            logger.info(f"Messages in context: {messages}")
+            logger.info(f"[LOOP] 🔄 Agent iteration {iteration}/{self.max_iterations}")
+            logger.info(f"[LOOP] 📝 Context messages count: {len(messages)}")
+            
+            # Log the last user message for context
+            for msg_item in reversed(messages):
+                if msg_item.get("role") == "user":
+                    content_preview = str(msg_item.get("content", ""))[:200]
+                    logger.info(f"[LOOP] 💬 Last user message: {content_preview}...")
+                    break
+            
             # Call LLM
+            logger.info(f"[LOOP] 🤖 Calling LLM with model: {self.model}")
             response = await self.provider.chat(
                 messages=messages,
                 tools=self.tools.get_definitions(),
                 model=self.model
             )
 
-            logger.info(f"LLM response: {response.content}...")
+            # Log LLM response
+            response_preview = response.content[:200] if response.content else "(no content)"
+            logger.info(f"[LOOP] 🤖 LLM response: {response_preview}...")
+            if response.has_tool_calls:
+                logger.info(f"[LOOP] 🔧 LLM requested {len(response.tool_calls)} tool call(s)")
+                for tc in response.tool_calls:
+                    logger.info(f"[LOOP] 🔧   - Tool: {tc.name}")
+            else:
+                logger.info(f"[LOOP] ✅ LLM provided final response (no tool calls)")
             
             # Handle tool calls
             if response.has_tool_calls:
@@ -236,8 +254,14 @@ class AgentLoop:
                 # Execute tools
                 for tool_call in response.tool_calls:
                     args_str = json.dumps(tool_call.arguments, ensure_ascii=False)
-                    logger.info(f"Tool call: {tool_call.name}({args_str[:200]})")
+                    logger.info(f"[LOOP] 🔧 Executing tool: {tool_call.name}")
+                    logger.info(f"[LOOP] 🔧 Tool arguments: {args_str[:500]}...")
+                    
                     result = await self.tools.execute(tool_call.name, tool_call.arguments)
+                    
+                    result_preview = str(result)[:300] if result else "(empty result)"
+                    logger.info(f"[LOOP] 🔧 Tool result: {result_preview}...")
+                    
                     messages = self.context.add_tool_result(
                         messages, tool_call.id, tool_call.name, result
                     )
@@ -250,8 +274,9 @@ class AgentLoop:
             final_content = "I've completed processing but have no response to give."
         
         # Log response preview
+        logger.info(f"[LOOP] 📤 Final response generated (length: {len(final_content)} chars)")
         preview = final_content[:120] + "..." if len(final_content) > 120 else final_content
-        logger.info(f"Response to {msg.channel}:{msg.sender_id}: {preview}")
+        logger.info(f"[LOOP] 📤 Response preview: {preview}")
         
         # Save to session
         session.add_message("user", msg.content)

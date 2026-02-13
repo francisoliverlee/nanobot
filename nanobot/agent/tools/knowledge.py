@@ -6,7 +6,7 @@ from typing import Any, Dict, List, Optional
 from pathlib import Path
 
 from nanobot.agent.tools.base import Tool
-from nanobot.knowledge.store import KnowledgeStore, DomainKnowledgeManager
+from nanobot.knowledge.store import LegacyKnowledgeStore, DomainKnowledgeManager
 from nanobot.config.loader import load_config
 
 
@@ -60,10 +60,19 @@ class KnowledgeSearchTool(Tool):
                      tags: Optional[List[str]] = None, limit: int = 10) -> str:
         """Search knowledge base."""
         try:
+            from loguru import logger
+            
+            logger.info(f"[KNOWLEDGE] 🔍 Search request:")
+            logger.info(f"[KNOWLEDGE]   - Domain: {domain}")
+            logger.info(f"[KNOWLEDGE]   - Query: {query}")
+            logger.info(f"[KNOWLEDGE]   - Category: {category}")
+            logger.info(f"[KNOWLEDGE]   - Tags: {tags}")
+            logger.info(f"[KNOWLEDGE]   - Limit: {limit}")
+            
             config = load_config()
             workspace = Path(config.agents.defaults.workspace)
             
-            store = KnowledgeStore(workspace)
+            store = LegacyKnowledgeStore(workspace)
             
             # Search knowledge
             results = store.search_knowledge(
@@ -73,11 +82,18 @@ class KnowledgeSearchTool(Tool):
                 tags=tags
             )
             
+            logger.info(f"[KNOWLEDGE] 📊 Search results: {len(results)} items found")
+            
             # Apply limit
             results = results[:limit]
             
             if not results:
+                logger.info(f"[KNOWLEDGE] ⚠️  No knowledge found")
                 return f"No knowledge found for domain '{domain}' with query '{query}'"
+            
+            # Log result titles
+            for i, item in enumerate(results, 1):
+                logger.info(f"[KNOWLEDGE]   {i}. {item.title} (score: {getattr(item, 'similarity_score', 'N/A')})")
             
             # Format results
             formatted_results = []
@@ -93,9 +109,13 @@ class KnowledgeSearchTool(Tool):
 ---
 """)
             
-            return f"Found {len(results)} knowledge items:\n" + "\n".join(formatted_results)
+            result_text = f"Found {len(results)} knowledge items:\n" + "\n".join(formatted_results)
+            logger.info(f"[KNOWLEDGE] ✅ Returning {len(result_text)} chars of formatted results")
+            return result_text
             
         except Exception as e:
+            from loguru import logger
+            logger.error(f"[KNOWLEDGE] ❌ Error searching knowledge base: {str(e)}")
             return f"Error searching knowledge base: {str(e)}"
 
 
@@ -156,7 +176,7 @@ class KnowledgeAddTool(Tool):
             config = load_config()
             workspace = Path(config.agents.defaults.workspace)
             
-            store = KnowledgeStore(workspace)
+            store = LegacyKnowledgeStore(workspace)
             
             item_id = store.add_knowledge(
                 domain=domain,
@@ -240,7 +260,7 @@ class DomainKnowledgeTool(Tool):
             config = load_config()
             workspace = Path(config.agents.defaults.workspace)
             
-            store = KnowledgeStore(workspace)
+            store = LegacyKnowledgeStore(workspace)
             domain_manager = DomainKnowledgeManager(store, "rocketmq")
             
             if action == "search_troubleshooting":
@@ -343,7 +363,7 @@ class KnowledgeExportTool(Tool):
             config = load_config()
             workspace = Path(config.agents.defaults.workspace)
             
-            store = KnowledgeStore(workspace)
+            store = LegacyKnowledgeStore(workspace)
             
             if format == "json":
                 export_data = store.export_knowledge(domain=domain)
