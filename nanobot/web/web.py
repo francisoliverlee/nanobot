@@ -2,7 +2,6 @@
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse
-from loguru import logger
 
 
 class ConnectionManager:
@@ -300,6 +299,11 @@ async def get():
             background: rgba(66, 153, 225, 0.05);
         }
 
+        .streaming-section-reasoning {
+            border-left-color: #4299e1;
+            background: rgba(66, 153, 225, 0.05);
+        }
+
         .streaming-section-tool {
             border-left-color: #48bb78;
             background: rgba(72, 187, 120, 0.05);
@@ -308,6 +312,18 @@ async def get():
         .streaming-section-answer {
             border-left-color: #ed8936;
             background: rgba(237, 137, 54, 0.05);
+        }
+
+        /* Reasoning内容样式 */
+        .reasoning-duration {
+            font-size: 0.8rem;
+            color: #718096;
+            margin-top: 5px;
+            padding: 3px 8px;
+            background: rgba(66, 153, 225, 0.1);
+            border-radius: 4px;
+            display: inline-block;
+            border-left: 2px solid #4299e1;
         }
 
         /* 工具执行区域样式 */
@@ -814,6 +830,7 @@ async def get():
             
             const contentType = data.content_type || 'reasoning';
             const content = data.content || '';
+            const duration = data.duration_from_start || 0;
             
             // 根据内容类型创建或获取对应的区域
             if (!currentStreamingSections[contentType]) {
@@ -825,9 +842,22 @@ async def get():
             
             // 添加内容到对应的区域
             if (currentStreamingSections[contentType]) {
+                // 对于reasoning类型，添加耗时信息
+                let displayContent = content;
+                if (contentType === 'reasoning') {
+                    // 直接使用duration_from_start字段作为每次reasoning的耗时
+                    const reasoningDuration = duration.toFixed(3);
+                    
+                    // 清理内容，移除重复的耗时信息
+                    console.log('Original reasoning content:', content);
+                    const cleanContent = content.replace(/\\n\\*\\(迭代: \\d+, 耗时: [0-9.]+秒\\*\\)/, '');
+                    
+                    displayContent = `${cleanContent}<div class=\"reasoning-duration\">思考耗时: ${reasoningDuration}秒</div>`;
+                }
+                
                 // 将\\n替换为实际的换行符
-                const formattedContent = content.replace(/\\n/g, '<br />');
-                currentStreamingSections[contentType].textContent += formattedContent;
+                const formattedContent = displayContent.replace(/\\n/g, '<br />');
+                currentStreamingSections[contentType].innerHTML += formattedContent;
                 scrollToBottom();
             }
         }
@@ -835,13 +865,23 @@ async def get():
         // 处理工具执行数据
         function handleToolCallData(data, sectionsDiv) {
             // 确保tool_name正确获取，添加调试信息
-            const toolName = data.tool_name || data.toolName || 'unknown';
+            const toolName = data.tool_name || data.toolName || data.name || data.function_name || data.command || '工具';
             const toolStatus = data.tool_status || 'start';
             
+            // 更智能的工具命令获取逻辑
+            let tool_command = 'server not response';
+            if (data.tool_args) {
+                // 尝试多种可能的命令字段
+                tool_command = data.tool_args.command || data.tool_args.query || data.tool_args.path || 
+                             data.tool_args.file || data.tool_args.function_name || 
+                             JSON.stringify(data.tool_args, null, 2);
+            }
+            
             // 调试日志
-            console.log('Tool call data:', data);
+            console.log('Tool call data:', JSON.stringify(data, null, 2));
             console.log('Tool name:', toolName);
             console.log('Tool status:', toolStatus);
+            console.log('Tool command:', tool_command);
             
             // 创建或获取工具执行区域
             if (!currentStreamingSections['tool_' + toolName]) {
@@ -856,7 +896,8 @@ async def get():
             // 根据工具状态更新显示
             switch (toolStatus) {
                 case 'start':
-                    toolContentDiv.innerHTML = `<div class=\"tool-status-start\">🔧 开始执行工具: <strong>${toolName}</strong></div>`;
+                    // 直接使用已经智能处理过的工具命令
+                    toolContentDiv.innerHTML = `<div class=\"tool-status-start\">🔧 开始执行工具: <strong>${tool_command}</strong></div>`;
                     break;
                 case 'completed':
                     const duration = data.tool_duration ? data.tool_duration.toFixed(3) : '未知';
@@ -1041,10 +1082,10 @@ async def process_user_message_streaming(user_input: str, websocket: WebSocket):
         content = context_info.get('content', '')
         if not content.strip():
             return
-        
+
         # 记录当前回调的时间
         callback_time = time.time()
-        
+
         # 根据内容类型添加分类标记
         content_type = 'reasoning'
         if context_info.get('is_final_answer', False):
@@ -1053,47 +1094,55 @@ async def process_user_message_streaming(user_input: str, websocket: WebSocket):
             content_type = 'tool'
         elif context_info.get('is_iteration_start', False):
             content_type = 'iteration'
-        
+
         # 计算从开始处理到当前回调的耗时
         current_duration = round(callback_time - start_time, 3)
-        
+
         # 获取迭代计数信息
         iteration_count = context_info.get('iteration_count', 0)
-        
-        # 为不同类型的内容添加耗时和迭代信息
+
+        # 为不同类型的内容添加适当的标记，避免重复信息
         if content_type == 'iteration':
             # 迭代开始信息
-            enhanced_content = f"🔄 第{iteration_count}次迭代开始 (耗时: {current_duration}秒)\\n"
+            enhanced_content = f"🔄 第{iteration_count}次迭代开始\\n"
         elif content_type == 'tool':
-            # 工具执行信息
+            # 工具执行信息 - 只添加状态标记，不重复添加耗时信息
             tool_status = context_info.get('tool_status', '')
-            tool_duration = context_info.get('tool_duration', 0)
             if tool_status == 'start':
-                enhanced_content = f"🔧 开始执行工具 (迭代: {iteration_count}, 总耗时: {current_duration}秒)\\n{content}"
+                enhanced_content = f"🔧 开始执行工具\\n{content}"
             elif tool_status == 'completed':
-                enhanced_content = f"✅ 工具执行完成 (迭代: {iteration_count}, 工具耗时: {tool_duration:.3f}秒, 总耗时: {current_duration}秒)\\n{content}"
+                enhanced_content = f"✅ 工具执行完成\\n{content}"
             elif tool_status == 'error':
-                enhanced_content = f"❌ 工具执行失败 (迭代: {iteration_count}, 工具耗时: {tool_duration:.3f}秒, 总耗时: {current_duration}秒)\\n{content}"
+                enhanced_content = f"❌ 工具执行失败\\n{content}"
             else:
-                enhanced_content = f"🔧 工具执行 (迭代: {iteration_count}, 总耗时: {current_duration}秒)\\n{content}"
+                enhanced_content = f"🔧 工具执行\\n{content}"
         else:
-            # 其他类型内容
-            enhanced_content = f"{content}\\n*(迭代: {iteration_count}, 耗时: {current_duration}秒)*"
-        
+            # 其他类型内容 - 直接使用原始内容，不添加额外信息
+            enhanced_content = content
+
         # 发送带类型标记和耗时统计的内容
         message_data = {
             'type': 'stream_chunk',
             'content_type': content_type,
             'content': enhanced_content,
             'is_reasoning': context_info.get('is_reasoning', False),
-            'is_tool_call': context_info.get('is_tool_call', False),
+            'is_tool_call': content_type == 'tool' or context_info.get('is_tool_call', False),
             'is_final_answer': context_info.get('is_final_answer', False),
             'is_iteration_start': context_info.get('is_iteration_start', False),
             'timestamp': callback_time,
             'duration_from_start': current_duration,
-            'iteration_count': iteration_count
+            'iteration_count': iteration_count,
         }
-        
+
+        # 如果是工具调用，添加工具名称和状态信息
+        if content_type == 'tool':
+            message_data['tool_name'] = context_info.get('tool_name', '')
+            message_data['tool_status'] = context_info.get('tool_status', '')
+            message_data['tool_duration'] = context_info.get('tool_duration', 0)
+            message_data['tool_result'] = context_info.get('tool_result', '')
+            message_data['tool_error'] = context_info.get('tool_error', '')
+            message_data['tool_args'] = context_info.get('tool_args')
+
         await websocket.send_text(json.dumps(message_data, ensure_ascii=False))
 
     # 为agent_loop设置流式回调

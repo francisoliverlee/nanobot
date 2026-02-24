@@ -41,7 +41,7 @@ class AgentLoop:
             provider: LLMProvider,
             workspace: Path,
             model: str | None = None,
-            max_iterations: int = 20,
+            max_iterations: int = 3,
             brave_api_key: str | None = None,
             exec_config: "ExecToolConfig | None" = None,
             cron_service: "CronService | None" = None,
@@ -305,10 +305,21 @@ class AgentLoop:
 
                     # 发送工具开始执行的信息到前端
                     if stream_callback:
+                        # 如果是exec工具，显示具体的命令而不是"exec"
+                        display_tool_name = tool_name
+                        if tool_name == "exec" and isinstance(tool_args, dict):
+                            command = tool_args.get("command", "")
+                            if command:
+                                # 提取命令的第一个单词作为显示名称
+                                command_parts = command.strip().split()
+                                if command_parts:
+                                    display_tool_name = f"exec: {command_parts[0]}"
+                        
                         tool_start_info = {
-                            "content": f"🔧 开始执行工具: {tool_name}\\n工具参数: {args_str[:200]}...\\n",
+                            "content": f"🔧 开始执行工具: {display_tool_name}\\n工具参数: {args_str[:1000]}...\\n",
                             "is_tool_call": True,
-                            "tool_name": tool_name,
+                            "tool_args": tool_args,
+                            "tool_name": display_tool_name,
                             "tool_status": "start"
                         }
                         if asyncio.iscoroutinefunction(stream_callback):
@@ -329,10 +340,21 @@ class AgentLoop:
 
                         # 发送工具执行结果到前端
                         if stream_callback:
+                            # 如果是exec工具，显示具体的命令而不是"exec"
+                            display_tool_name = tool_name
+                            if tool_name == "exec" and isinstance(tool_args, dict):
+                                command = tool_args.get("command", "")
+                                if command:
+                                    # 提取命令的第一个单词作为显示名称
+                                    command_parts = command.strip().split()
+                                    if command_parts:
+                                        display_tool_name = f"exec: {command_parts[0]}"
+                            
                             tool_result_info = {
-                                "content": f"✅ 工具执行完成: {tool_name}\\n执行耗时: {duration:.3f}秒\\n执行结果: {result_preview}\\n",
+                                "content": f"✅ 工具执行完成: {display_tool_name}\\n执行耗时: {duration:.3f}秒\\n执行结果: {result_preview}\\n",
                                 "is_tool_call": True,
-                                "tool_name": tool_name,
+                                "tool_name": display_tool_name,
+                                "tool_args": tool_args,
                                 "tool_status": "completed",
                                 "tool_duration": duration,
                                 "tool_result": result_preview
@@ -356,10 +378,21 @@ class AgentLoop:
                         
                         # 发送工具执行错误到前端
                         if stream_callback:
+                            # 如果是exec工具，显示具体的命令而不是"exec"
+                            display_tool_name = tool_name
+                            if tool_name == "exec" and isinstance(tool_args, dict):
+                                command = tool_args.get("command", "")
+                                if command:
+                                    # 提取命令的第一个单词作为显示名称
+                                    command_parts = command.strip().split()
+                                    if command_parts:
+                                        display_tool_name = f"exec: {command_parts[0]}"
+                            
                             tool_error_info = {
-                                "content": f"❌ 工具执行失败: {tool_name}\\n错误信息: {error_msg}\\n执行耗时: {duration:.3f}秒\\n",
+                                "content": f"❌ 工具执行失败: {display_tool_name}\\n错误信息: {error_msg}\\n执行耗时: {duration:.3f}秒\\n",
                                 "is_tool_call": True,
-                                "tool_name": tool_name,
+                                "tool_name": display_tool_name,
+                                "tool_args": tool_args,
                                 "tool_status": "error",
                                 "tool_duration": duration,
                                 "tool_error": error_msg
