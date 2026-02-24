@@ -249,6 +249,104 @@ async def get():
             border-bottom-left-radius: 5px;
         }
 
+        /* 流式内容分类显示样式 */
+        .streaming-sections {
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+        }
+
+        .streaming-section {
+            border-left: 4px solid #e2e8f0;
+            padding-left: 15px;
+            margin: 5px 0;
+        }
+
+        .streaming-section-reasoning {
+            border-left-color: #4299e1;
+            background: rgba(66, 153, 225, 0.05);
+        }
+
+        .streaming-section-thinking {
+            border-left-color: #4299e1;
+            background: rgba(66, 153, 225, 0.05);
+        }
+
+        .streaming-section-tool {
+            border-left-color: #48bb78;
+            background: rgba(72, 187, 120, 0.05);
+        }
+
+        .streaming-section-answer {
+            border-left-color: #ed8936;
+            background: rgba(237, 137, 54, 0.05);
+        }
+
+        /* 工具执行区域样式 */
+        .tool-section {
+            border-left: 4px solid #48bb78;
+            background: rgba(72, 187, 120, 0.05);
+            padding: 10px 15px;
+            margin: 10px 0;
+            border-radius: 4px;
+        }
+
+        .tool-status-start {
+            color: #3182ce;
+            font-weight: 600;
+            margin-bottom: 5px;
+        }
+
+        .tool-status-completed {
+            color: #38a169;
+            font-weight: 600;
+            margin-bottom: 5px;
+        }
+
+        .tool-status-error {
+            color: #e53e3e;
+            font-weight: 600;
+            margin-bottom: 5px;
+        }
+
+        .tool-details {
+            margin-top: 8px;
+            padding-left: 10px;
+            border-left: 2px solid #e2e8f0;
+        }
+
+        .tool-duration {
+            font-size: 0.85rem;
+            color: #718096;
+            margin-bottom: 3px;
+        }
+
+        .tool-result, .tool-error {
+            font-size: 0.9rem;
+            color: #4a5568;
+            white-space: pre-wrap;
+            word-wrap: break-word;
+        }
+
+        .section-header {
+            margin-bottom: 8px;
+        }
+
+        .section-title {
+            font-weight: 600;
+            font-size: 0.9rem;
+            color: #4a5568;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .streaming-content {
+            font-size: 1rem;
+            line-height: 1.5;
+            white-space: pre-wrap;
+            word-wrap: break-word;
+        }
+
         .typing-indicator {
             display: flex;
             align-items: center;
@@ -512,20 +610,33 @@ async def get():
         // WebSocket message handling for streaming responses
         let currentAIMessage = null;
         let isStreaming = false;
+        let currentStreamingSections = {}; // 存储不同类型的流式内容
         
         ws.onmessage = function(event) {
             const response = event.data;
+            
+            // 检查是否是JSON格式的流式响应数据
+            try {
+                const data = JSON.parse(response);
+                if (data.type === 'stream_chunk' || data.content_type || data.is_tool_call) {
+                    handleStreamChunk(data);
+                    return;
+                }
+            } catch (e) {
+                // 不是JSON格式，按原逻辑处理
+            }
             
             // Check if this is the start of a new response
             if (response.includes("🤖 AI Agent is processing your request")) {
                 hideTypingIndicator();
                 isStreaming = true;
+                currentStreamingSections = {}; // 重置流式内容分类
                 currentAIMessage = document.createElement('div');
                 currentAIMessage.className = 'message ai streaming';
                 currentAIMessage.innerHTML = `
                     <div class="avatar">AI</div>
                     <div class="message-content">
-                        <div class="streaming-content"></div>
+                        <div class="streaming-sections"></div>
                         <div class="timestamp">${new Date().toLocaleTimeString()}</div>
                     </div>
                 `;
@@ -549,12 +660,13 @@ async def get():
                     currentAIMessage.querySelector('.message-content').appendChild(timeDiv);
                 }
                 currentAIMessage = null;
+                currentStreamingSections = {};
                 
-                // 处理完成，重新启用发送功能
+                // Re-enable input after processing completes
                 isProcessing = false;
                 sendButton.disabled = false;
                 messageInput.disabled = false;
-                messageInput.focus(); // 重新聚焦到输入框
+                messageInput.focus();
                 
                 scrollToBottom();
                 return;
@@ -562,58 +674,202 @@ async def get():
             
             // Handle streaming content
             if (isStreaming && currentAIMessage) {
-                const contentDiv = currentAIMessage.querySelector('.streaming-content');
-                if (contentDiv) {
-                    contentDiv.textContent += response;
-                    // Auto-scroll to show latest content
+                const sectionsDiv = currentAIMessage.querySelector('.streaming-sections');
+                if (sectionsDiv) {
+                    // 创建默认的流式内容区域
+                    if (!currentStreamingSections.default) {
+                        const defaultSection = createStreamingSection('thinking', '思考过程');
+                        sectionsDiv.appendChild(defaultSection);
+                        currentStreamingSections.default = defaultSection.querySelector('.streaming-content');
+                    }
+                    currentStreamingSections.default.textContent += response;
                     scrollToBottom();
                 }
             } else if (response.includes("🤖 AI Agent is processing your request")) {
-                // 这是流式输出的开始
+                // Start of streaming output
                 hideTypingIndicator();
                 isStreaming = true;
+                currentStreamingSections = {};
                 currentAIMessage = document.createElement('div');
                 currentAIMessage.className = 'message ai streaming';
                 currentAIMessage.innerHTML = `
                     <div class="avatar">AI</div>
                     <div class="message-content">
-                        <div class="streaming-content"></div>
+                        <div class="streaming-sections"></div>
                         <div class="timestamp">${new Date().toLocaleTimeString()}</div>
                     </div>
                 `;
                 messagesDiv.appendChild(currentAIMessage);
             } else if (isStreaming && currentAIMessage) {
-                // 流式输出内容
-                const contentDiv = currentAIMessage.querySelector('.streaming-content');
-                if (contentDiv) {
-                    contentDiv.textContent += response;
+                // Streaming content
+                const sectionsDiv = currentAIMessage.querySelector('.streaming-sections');
+                if (sectionsDiv) {
+                    // 创建默认的流式内容区域
+                    if (!currentStreamingSections.default) {
+                        const defaultSection = createStreamingSection('thinking', '思考过程');
+                        sectionsDiv.appendChild(defaultSection);
+                        currentStreamingSections.default = defaultSection.querySelector('.streaming-content');
+                    }
+                    currentStreamingSections.default.textContent += response;
                     scrollToBottom();
                 }
             } else {
-            // Fallback for non-streaming responses
-            hideTypingIndicator();
-            const timeMatch = response.match(/\\*总耗时: ([0-9.]+)秒 \| LLM执行耗时: ([0-9.]+)秒\\*/);
-            let messageContent = response;
-            let totalTime = null;
-            let llmTime = null;
-            
-            if (timeMatch) {
-                totalTime = timeMatch[1];
-                llmTime = timeMatch[2];
-                messageContent = response.replace(/\\n\\n---\\n\\*总耗时: [0-9.]+秒 \| LLM执行耗时: [0-9.]+秒\\*/, '');
+                // Fallback for non-streaming responses
+                hideTypingIndicator();
+                const timeMatch = response.match(/\\*总耗时: ([0-9.]+)秒 \| LLM执行耗时: ([0-9.]+)秒\\*/);
+                let messageContent = response;
+                let totalTime = null;
+                let llmTime = null;
+                
+                if (timeMatch) {
+                    totalTime = timeMatch[1];
+                    llmTime = timeMatch[2];
+                    messageContent = response.replace(/\\n\\n---\\n\\*总耗时: [0-9.]+秒 \| LLM执行耗时: [0-9.]+秒\\*/, '');
+                }
+                
+                addAIMessage(messageContent, totalTime, llmTime);
+                
+                // Re-enable input after processing completes
+                isProcessing = false;
+                sendButton.disabled = false;
+                messageInput.disabled = false;
+                messageInput.focus();
+            }
+        };
+        
+        // 处理流式分块数据
+        function handleStreamChunk(data) {
+            if (!isStreaming) {
+                hideTypingIndicator();
+                isStreaming = true;
+                currentStreamingSections = {};
+                currentAIMessage = document.createElement('div');
+                currentAIMessage.className = 'message ai streaming';
+                currentAIMessage.innerHTML = `
+                    <div class=\"avatar\">AI</div>
+                    <div class=\"message-content\">
+                        <div class=\"streaming-sections\"></div>
+                        <div class=\"timestamp\">${new Date().toLocaleTimeString()}</div>
+                    </div>
+                `;
+                messagesDiv.appendChild(currentAIMessage);
             }
             
-            addAIMessage(messageContent, totalTime, llmTime);
+            const sectionsDiv = currentAIMessage.querySelector('.streaming-sections');
+            if (!sectionsDiv) return;
             
-            // 处理完成，重新启用发送功能
-            isProcessing = false;
-            sendButton.disabled = false;
-            messageInput.disabled = false;
-            messageInput.focus(); // 重新聚焦到输入框
+            // 处理工具执行结果
+            if (data.is_tool_call) {
+                handleToolCallData(data, sectionsDiv);
+                return;
+            }
+            
+            const contentType = data.content_type || 'reasoning';
+            const content = data.content || '';
+            
+            // 根据内容类型创建或获取对应的区域
+            if (!currentStreamingSections[contentType]) {
+                const sectionTitle = getSectionTitle(contentType);
+                const section = createStreamingSection(contentType, sectionTitle);
+                sectionsDiv.appendChild(section);
+                currentStreamingSections[contentType] = section.querySelector('.streaming-content');
+            }
+            
+            // 添加内容到对应的区域
+            if (currentStreamingSections[contentType]) {
+                currentStreamingSections[contentType].textContent += content;
+                scrollToBottom();
+            }
         }
-        };
-
-        // Send message function
+        
+        // 处理工具执行数据
+        function handleToolCallData(data, sectionsDiv) {
+            const toolName = data.tool_name || 'unknown';
+            const toolStatus = data.tool_status || 'start';
+            
+            // 创建或获取工具执行区域
+            if (!currentStreamingSections['tool_' + toolName]) {
+                const toolSection = createToolSection(toolName);
+                sectionsDiv.appendChild(toolSection);
+                currentStreamingSections['tool_' + toolName] = toolSection.querySelector('.tool-content');
+            }
+            
+            const toolContentDiv = currentStreamingSections['tool_' + toolName];
+            if (!toolContentDiv) return;
+            
+            // 根据工具状态更新显示
+            switch (toolStatus) {
+                case 'start':
+                    toolContentDiv.innerHTML = `<div class=\"tool-status-start\">🔧 开始执行工具: <strong>${toolName}</strong></div>`;
+                    break;
+                case 'completed':
+                    const duration = data.tool_duration ? data.tool_duration.toFixed(3) : '未知';
+                    const result = data.tool_result || '无结果';
+                    toolContentDiv.innerHTML = `
+                        <div class=\"tool-status-completed\">
+                            ✅ 工具执行完成: <strong>${toolName}</strong>
+                            <div class=\"tool-details\">
+                                <div class=\"tool-duration\">执行耗时: ${duration}秒</div>
+                                <div class=\"tool-result\">执行结果: ${result}</div>
+                            </div>
+                        </div>
+                    `;
+                    break;
+                case 'error':
+                    const errorMsg = data.tool_error || '未知错误';
+                    const errorDuration = data.tool_duration ? data.tool_duration.toFixed(3) : '未知';
+                    toolContentDiv.innerHTML = `
+                        <div class=\"tool-status-error\">
+                            ❌ 工具执行失败: <strong>${toolName}</strong>
+                            <div class=\"tool-details\">
+                                <div class=\"tool-duration\">执行耗时: ${errorDuration}秒</div>
+                                <div class=\"tool-error\">错误信息: ${errorMsg}</div>
+                            </div>
+                        </div>
+                    `;
+                    break;
+            }
+            
+            scrollToBottom();
+        }
+        
+        // 创建工具执行区域
+        function createToolSection(toolName) {
+            const section = document.createElement('div');
+            section.className = 'streaming-section streaming-section-tool';
+            section.innerHTML = `
+                <div class=\"section-header\">
+                    <span class=\"section-title\">工具执行: ${toolName}</span>
+                </div>
+                <div class=\"tool-content\"></div>
+            `;
+            return section;
+        }
+        
+        // 获取内容类型的显示标题
+        function getSectionTitle(contentType) {
+            const titles = {
+                'reasoning': '思考过程',
+                'thinking': '思考过程',
+                'tool': '工具执行',
+                'answer': '最终回答',
+                'default': '处理过程'
+            };
+            return titles[contentType] || titles['default'];
+        }
+        
+        // 创建流式内容区域
+        function createStreamingSection(type, title) {
+            const section = document.createElement('div');
+            section.className = `streaming-section streaming-section-${type}`;
+            section.innerHTML = `
+                <div class="section-header">
+                    <span class="section-title">${title}</span>
+                </div>
+                <div class="streaming-content"></div>
+            `;
+            return section;
+        }
         function sendMessage() {
             if (isProcessing) {
                 return; // 正在处理中，不允许发送新消息
@@ -678,6 +934,7 @@ async def websocket_endpoint(websocket: WebSocket):
 async def process_user_message_streaming(user_input: str, websocket: WebSocket):
     """Process user message with real-time streaming output."""
     import time
+    import json
     from nanobot.config.loader import load_config
     from nanobot.bus.queue import MessageBus
     from nanobot.agent.loop import AgentLoop
@@ -719,21 +976,30 @@ async def process_user_message_streaming(user_input: str, websocket: WebSocket):
     llm_start_time = time.time()
 
     # 设置流式回调函数
-    async def stream_callback(chunk: str):
-        """流式输出回调函数"""
-        _content = ''
-        if isinstance(chunk, dict):
-            _content = chunk.get('content', '')
-
-        if isinstance(chunk, str):
-            _content = chunk
-
-        if not _content:
-            _content = 'no response from llm chunk'
-            logger.warning(f"No content in chunk: {chunk}")
-
-        if _content.strip():
-            await websocket.send_text(_content)
+    async def stream_callback(context_info: dict):
+        """流式输出回调函数，按类型分类显示内容"""
+        content = context_info.get('content', '')
+        if not content.strip():
+            return
+        
+        # 根据内容类型添加分类标记
+        content_type = 'reasoning'
+        if context_info.get('is_final_answer', False):
+            content_type = 'answer'
+        elif context_info.get('is_tool_call', False):
+            content_type = 'tool'
+        
+        # 发送带类型标记的内容
+        message_data = {
+            'type': 'stream_chunk',
+            'content_type': content_type,
+            'content': content,
+            'is_reasoning': context_info.get('is_reasoning', False),
+            'is_tool_call': context_info.get('is_tool_call', False),
+            'is_final_answer': context_info.get('is_final_answer', False)
+        }
+        
+        await websocket.send_text(json.dumps(message_data, ensure_ascii=False))
 
     # 为agent_loop设置流式回调
     agent_loop.stream_callback = stream_callback

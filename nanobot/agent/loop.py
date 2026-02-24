@@ -288,6 +288,19 @@ class AgentLoop:
                     # 记录开始时间
                     start_time = time.time()
 
+                    # 发送工具开始执行的信息到前端
+                    if stream_callback:
+                        tool_start_info = {
+                            "content": f"🔧 开始执行工具: {tool_name}\\n工具参数: {args_str[:200]}...\\n",
+                            "is_tool_call": True,
+                            "tool_name": tool_name,
+                            "tool_status": "start"
+                        }
+                        if asyncio.iscoroutinefunction(stream_callback):
+                            await stream_callback(tool_start_info)
+                        else:
+                            stream_callback(tool_start_info)
+
                     try:
                         result = await self.tools.execute(tool_name, tool_args)
                         
@@ -298,6 +311,21 @@ class AgentLoop:
                         result_preview = str(result)[:300] if result else "(empty result)"
                         logger.info(f"[LOOP] 🔧 工具输出: {result_preview}...")
                         logger.info(f"[LOOP] ⏱️  工具执行耗时: {duration:.3f}秒")
+
+                        # 发送工具执行结果到前端
+                        if stream_callback:
+                            tool_result_info = {
+                                "content": f"✅ 工具执行完成: {tool_name}\\n执行耗时: {duration:.3f}秒\\n执行结果: {result_preview}\\n",
+                                "is_tool_call": True,
+                                "tool_name": tool_name,
+                                "tool_status": "completed",
+                                "tool_duration": duration,
+                                "tool_result": result_preview
+                            }
+                            if asyncio.iscoroutinefunction(stream_callback):
+                                await stream_callback(tool_result_info)
+                            else:
+                                stream_callback(tool_result_info)
 
                         messages = self.context.add_tool_result(
                             messages, tool_call.id, tool_name, result
@@ -310,6 +338,21 @@ class AgentLoop:
                         error_msg = f"工具执行失败: {str(e)}"
                         logger.error(f"[LOOP] ❌ {error_msg}")
                         logger.error(f"[LOOP] ⏱️  工具执行耗时: {duration:.3f}秒")
+                        
+                        # 发送工具执行错误到前端
+                        if stream_callback:
+                            tool_error_info = {
+                                "content": f"❌ 工具执行失败: {tool_name}\\n错误信息: {error_msg}\\n执行耗时: {duration:.3f}秒\\n",
+                                "is_tool_call": True,
+                                "tool_name": tool_name,
+                                "tool_status": "error",
+                                "tool_duration": duration,
+                                "tool_error": error_msg
+                            }
+                            if asyncio.iscoroutinefunction(stream_callback):
+                                await stream_callback(tool_error_info)
+                            else:
+                                stream_callback(tool_error_info)
                         
                         # 添加错误结果到消息中
                         messages = self.context.add_tool_result(
