@@ -249,6 +249,34 @@ async def get():
             border-bottom-left-radius: 5px;
         }
 
+        .message-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 8px;
+            padding-bottom: 4px;
+            border-bottom: 1px solid #e2e8f0;
+        }
+
+        .iteration-info {
+            font-size: 0.85rem;
+            font-weight: 600;
+            color: #4a5568;
+            background: #edf2f7;
+            padding: 2px 6px;
+            border-radius: 4px;
+        }
+
+        .duration-info {
+            font-size: 0.8rem;
+            color: #718096;
+        }
+
+        .timestamp {
+            font-size: 0.8rem;
+            color: #a0aec0;
+        }
+
         /* 流式内容分类显示样式 */
         .streaming-sections {
             display: flex;
@@ -551,22 +579,25 @@ async def get():
             const messageDiv = document.createElement('div');
             messageDiv.className = 'message ai';
             
-            let timeInfo = `<div class="timestamp">${new Date().toLocaleTimeString()}</div>`;
+            // 将\\n替换为实际的换行符
+            const formattedContent = content.replace(/\\n/g, '<br />');
+            
+            let timeInfo = `<div class=\"timestamp\">${new Date().toLocaleTimeString()}</div>`;
             if (totalTime && llmTime) {
                 timeInfo += `
-                    <div class="processing-time">
+                    <div class=\"processing-time\">
                         <div>总耗时: ${totalTime}秒</div>
                         <div>LLM执行耗时: ${llmTime}秒</div>
                     </div>
                 `;
             } else if (totalTime) {
-                timeInfo += `<div class="processing-time">总耗时: ${totalTime}秒</div>`;
+                timeInfo += `<div class=\"processing-time\">总耗时: ${totalTime}秒</div>`;
             }
             
             messageDiv.innerHTML = `
-                <div class="avatar">AI</div>
-                <div class="message-content">
-                    ${content}
+                <div class=\"avatar\">AI</div>
+                <div class=\"message-content\">
+                    ${formattedContent}
                     ${timeInfo}
                 </div>
             `;
@@ -647,7 +678,7 @@ async def get():
             // Check if this is processing time info
             if (response.includes("总耗时:")) {
                 isStreaming = false;
-                const timeMatch = response.match(/\\*总耗时: ([0-9.]+)秒 \| LLM执行耗时: ([0-9.]+)秒\\*/);
+                const timeMatch = response.match(/\*总耗时: ([0-9.]+)秒 \| LLM执行耗时: ([0-9.]+)秒\*/);
                 if (timeMatch && currentAIMessage) {
                     const totalTime = timeMatch[1];
                     const llmTime = timeMatch[2];
@@ -682,7 +713,9 @@ async def get():
                         sectionsDiv.appendChild(defaultSection);
                         currentStreamingSections.default = defaultSection.querySelector('.streaming-content');
                     }
-                    currentStreamingSections.default.textContent += response;
+                    // 将\\n替换为实际的换行符
+                    const formattedResponse = response.replace(/\\n/g, '<br />');
+                    currentStreamingSections.default.textContent += formattedResponse;
                     scrollToBottom();
                 }
             } else if (response.includes("🤖 AI Agent is processing your request")) {
@@ -716,7 +749,7 @@ async def get():
             } else {
                 // Fallback for non-streaming responses
                 hideTypingIndicator();
-                const timeMatch = response.match(/\\*总耗时: ([0-9.]+)秒 \| LLM执行耗时: ([0-9.]+)秒\\*/);
+                const timeMatch = response.match(/\\n\\n---\\n\*总耗时: ([0-9.]+)秒 \| LLM执行耗时: ([0-9.]+)秒\*/);
                 let messageContent = response;
                 let totalTime = null;
                 let llmTime = null;
@@ -724,7 +757,7 @@ async def get():
                 if (timeMatch) {
                     totalTime = timeMatch[1];
                     llmTime = timeMatch[2];
-                    messageContent = response.replace(/\\n\\n---\\n\\*总耗时: [0-9.]+秒 \| LLM执行耗时: [0-9.]+秒\\*/, '');
+                    messageContent = response.replace(/\\n\\n---\\n\*总耗时: [0-9.]+秒 \| LLM执行耗时: [0-9.]+秒\*/, '');
                 }
                 
                 addAIMessage(messageContent, totalTime, llmTime);
@@ -739,17 +772,32 @@ async def get():
         
         // 处理流式分块数据
         function handleStreamChunk(data) {
-            if (!isStreaming) {
+            // 检查是否是新的agent响应（迭代开始或最终答案）
+            const isNewResponse = data.is_iteration_start || data.is_final_answer || 
+                                 (data.content_type === 'answer' && !isStreaming);
+            
+            // 如果是新的agent响应，创建新消息
+            if (isNewResponse || !isStreaming) {
                 hideTypingIndicator();
                 isStreaming = true;
                 currentStreamingSections = {};
                 currentAIMessage = document.createElement('div');
                 currentAIMessage.className = 'message ai streaming';
+                
+                // 添加迭代和耗时信息到消息标题
+                const iterationCount = data.iteration_count || 0;
+                const duration = data.duration_from_start || 0;
+                const timestamp = new Date().toLocaleTimeString();
+                
                 currentAIMessage.innerHTML = `
                     <div class=\"avatar\">AI</div>
                     <div class=\"message-content\">
+                        <div class=\"message-header\">
+                            <span class=\"iteration-info\">迭代 ${iterationCount}</span>
+                            <span class=\"duration-info\">耗时: ${duration.toFixed(3)}秒</span>
+                            <span class=\"timestamp\">${timestamp}</span>
+                        </div>
                         <div class=\"streaming-sections\"></div>
-                        <div class=\"timestamp\">${new Date().toLocaleTimeString()}</div>
                     </div>
                 `;
                 messagesDiv.appendChild(currentAIMessage);
@@ -777,15 +825,23 @@ async def get():
             
             // 添加内容到对应的区域
             if (currentStreamingSections[contentType]) {
-                currentStreamingSections[contentType].textContent += content;
+                // 将\\n替换为实际的换行符
+                const formattedContent = content.replace(/\\n/g, '<br />');
+                currentStreamingSections[contentType].textContent += formattedContent;
                 scrollToBottom();
             }
         }
         
         // 处理工具执行数据
         function handleToolCallData(data, sectionsDiv) {
-            const toolName = data.tool_name || 'unknown';
+            // 确保tool_name正确获取，添加调试信息
+            const toolName = data.tool_name || data.toolName || 'unknown';
             const toolStatus = data.tool_status || 'start';
+            
+            // 调试日志
+            console.log('Tool call data:', data);
+            console.log('Tool name:', toolName);
+            console.log('Tool status:', toolStatus);
             
             // 创建或获取工具执行区域
             if (!currentStreamingSections['tool_' + toolName]) {
@@ -805,12 +861,14 @@ async def get():
                 case 'completed':
                     const duration = data.tool_duration ? data.tool_duration.toFixed(3) : '未知';
                     const result = data.tool_result || '无结果';
+                    // 将\\n替换为实际的换行符
+                    const formattedResult = result.replace(/\\n/g, '\\n');
                     toolContentDiv.innerHTML = `
                         <div class=\"tool-status-completed\">
                             ✅ 工具执行完成: <strong>${toolName}</strong>
                             <div class=\"tool-details\">
                                 <div class=\"tool-duration\">执行耗时: ${duration}秒</div>
-                                <div class=\"tool-result\">执行结果: ${result}</div>
+                                <div class=\"tool-result\">执行结果: ${formattedResult}</div>
                             </div>
                         </div>
                     `;
@@ -818,12 +876,14 @@ async def get():
                 case 'error':
                     const errorMsg = data.tool_error || '未知错误';
                     const errorDuration = data.tool_duration ? data.tool_duration.toFixed(3) : '未知';
+                    // 将\\n替换为实际的换行符
+                    const formattedErrorMsg = errorMsg.replace(/\\n/g, '<br />');
                     toolContentDiv.innerHTML = `
                         <div class=\"tool-status-error\">
                             ❌ 工具执行失败: <strong>${toolName}</strong>
                             <div class=\"tool-details\">
                                 <div class=\"tool-duration\">执行耗时: ${errorDuration}秒</div>
-                                <div class=\"tool-error\">错误信息: ${errorMsg}</div>
+                                <div class=\"tool-error\">错误信息: ${formattedErrorMsg}</div>
                             </div>
                         </div>
                     `;
@@ -970,17 +1030,20 @@ async def process_user_message_streaming(user_input: str, websocket: WebSocket):
     )
 
     # Send initial processing message
-    await websocket.send_text("🤖 AI Agent is processing your request...\n\n")
+    await websocket.send_text("🤖 AI Agent is processing your request...\\n\\n")
 
     # Record LLM start time
     llm_start_time = time.time()
 
     # 设置流式回调函数
     async def stream_callback(context_info: dict):
-        """流式输出回调函数，按类型分类显示内容"""
+        """流式输出回调函数，按类型分类显示内容，并统计每次返回的耗时"""
         content = context_info.get('content', '')
         if not content.strip():
             return
+        
+        # 记录当前回调的时间
+        callback_time = time.time()
         
         # 根据内容类型添加分类标记
         content_type = 'reasoning'
@@ -988,15 +1051,47 @@ async def process_user_message_streaming(user_input: str, websocket: WebSocket):
             content_type = 'answer'
         elif context_info.get('is_tool_call', False):
             content_type = 'tool'
+        elif context_info.get('is_iteration_start', False):
+            content_type = 'iteration'
         
-        # 发送带类型标记的内容
+        # 计算从开始处理到当前回调的耗时
+        current_duration = round(callback_time - start_time, 3)
+        
+        # 获取迭代计数信息
+        iteration_count = context_info.get('iteration_count', 0)
+        
+        # 为不同类型的内容添加耗时和迭代信息
+        if content_type == 'iteration':
+            # 迭代开始信息
+            enhanced_content = f"🔄 第{iteration_count}次迭代开始 (耗时: {current_duration}秒)\\n"
+        elif content_type == 'tool':
+            # 工具执行信息
+            tool_status = context_info.get('tool_status', '')
+            tool_duration = context_info.get('tool_duration', 0)
+            if tool_status == 'start':
+                enhanced_content = f"🔧 开始执行工具 (迭代: {iteration_count}, 总耗时: {current_duration}秒)\\n{content}"
+            elif tool_status == 'completed':
+                enhanced_content = f"✅ 工具执行完成 (迭代: {iteration_count}, 工具耗时: {tool_duration:.3f}秒, 总耗时: {current_duration}秒)\\n{content}"
+            elif tool_status == 'error':
+                enhanced_content = f"❌ 工具执行失败 (迭代: {iteration_count}, 工具耗时: {tool_duration:.3f}秒, 总耗时: {current_duration}秒)\\n{content}"
+            else:
+                enhanced_content = f"🔧 工具执行 (迭代: {iteration_count}, 总耗时: {current_duration}秒)\\n{content}"
+        else:
+            # 其他类型内容
+            enhanced_content = f"{content}\\n*(迭代: {iteration_count}, 耗时: {current_duration}秒)*"
+        
+        # 发送带类型标记和耗时统计的内容
         message_data = {
             'type': 'stream_chunk',
             'content_type': content_type,
-            'content': content,
+            'content': enhanced_content,
             'is_reasoning': context_info.get('is_reasoning', False),
             'is_tool_call': context_info.get('is_tool_call', False),
-            'is_final_answer': context_info.get('is_final_answer', False)
+            'is_final_answer': context_info.get('is_final_answer', False),
+            'is_iteration_start': context_info.get('is_iteration_start', False),
+            'timestamp': callback_time,
+            'duration_from_start': current_duration,
+            'iteration_count': iteration_count
         }
         
         await websocket.send_text(json.dumps(message_data, ensure_ascii=False))
@@ -1015,7 +1110,7 @@ async def process_user_message_streaming(user_input: str, websocket: WebSocket):
     if response and response.strip():
         # 检查是否已经通过流式输出发送了内容
         # 如果没有流式输出，则发送完整响应
-        await websocket.send_text("\n" + response)
+        await websocket.send_text("\\n" + response)
     elif not response:
         await websocket.send_text("No response from agent.")
 
@@ -1023,7 +1118,7 @@ async def process_user_message_streaming(user_input: str, websocket: WebSocket):
     total_processing_time = round(end_time - start_time, 1)
 
     # Send processing times
-    await websocket.send_text(f"\n---\n*总耗时: {total_processing_time}秒 | LLM执行耗时: {llm_execution_time}秒*")
+    await websocket.send_text(f"\\n---\\n*总耗时: {total_processing_time}秒 | LLM执行耗时: {llm_execution_time}秒*")
 
 
 async def process_user_message(user_input: str) -> str:
@@ -1075,6 +1170,6 @@ async def process_user_message(user_input: str) -> str:
     total_processing_time = round(end_time - start_time, 1)
 
     if response:
-        return f"{response}\n\n---\n*总耗时: {total_processing_time}秒 | LLM执行耗时: {llm_execution_time}秒*"
+        return f"{response}\\n\\n---\\n*总耗时: {total_processing_time}秒 | LLM执行耗时: {llm_execution_time}秒*"
     else:
-        return f"No response from agent.\n\n---\n*总耗时: {total_processing_time}秒 | LLM执行耗时: {llm_execution_time}秒*"
+        return f"No response from agent.\\n\\n---\\n*总耗时: {total_processing_time}秒 | LLM执行耗时: {llm_execution_time}秒*"

@@ -230,6 +230,21 @@ class AgentLoop:
             # 检查是否有流式回调函数
             stream_callback = getattr(self, 'stream_callback', None)
             
+            # 如果存在流式回调，传递迭代计数信息
+            if stream_callback:
+                # 发送迭代开始信息
+                iteration_info = {
+                    "content": f"🔄 第{iteration}次迭代开始处理...\\n",
+                    "is_iteration_start": True,
+                    "iteration_count": iteration,
+                    "timestamp": llm_start_time,
+                    "duration_from_start": round(llm_start_time - process_start_time, 3)
+                }
+                if asyncio.iscoroutinefunction(stream_callback):
+                    await stream_callback(iteration_info)
+                else:
+                    stream_callback(iteration_info)
+            
             response = await self.provider.chat(
                 messages=messages,
                 tools=self.tools.get_definitions(),
@@ -680,7 +695,34 @@ class AgentLoop:
             content=content
         )
 
+        # 记录开始时间
+        start_time = time.time()
+        
+        # 设置流式回调函数，传递迭代计数和耗时信息
+        original_stream_callback = getattr(self, 'stream_callback', None)
+        
+        if original_stream_callback:
+            async def enhanced_stream_callback(context_info: dict):
+                """增强的流式回调，添加迭代计数和耗时信息"""
+                # 添加迭代计数和耗时信息
+                context_info['iteration_count'] = context_info.get('iteration_count', 0)
+                context_info['timestamp'] = time.time()
+                context_info['duration_from_start'] = round(time.time() - start_time, 3)
+                
+                # 调用原始回调函数
+                if asyncio.iscoroutinefunction(original_stream_callback):
+                    await original_stream_callback(context_info)
+                else:
+                    original_stream_callback(context_info)
+            
+            self.stream_callback = enhanced_stream_callback
+
         response = await self._process_message(msg)
+        
+        # 恢复原始回调函数
+        if original_stream_callback:
+            self.stream_callback = original_stream_callback
+        
         return response.content if response else ""
 
     async def stream_callback(self, context_info: dict) -> None:
