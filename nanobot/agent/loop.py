@@ -3,6 +3,7 @@
 import asyncio
 import json
 import re
+import time
 from pathlib import Path
 from typing import Any
 
@@ -203,6 +204,9 @@ class AgentLoop:
         # Agent loop
         iteration = 0
         final_content = None
+        
+        # 记录整个消息处理的开始时间
+        process_start_time = time.time()
 
         while iteration < self.max_iterations:
             iteration += 1
@@ -220,6 +224,9 @@ class AgentLoop:
             # Call LLM
             logger.info(f"[LOOP] 🤖 Calling LLM with model: {self.model}")
             
+            # 记录LLM调用开始时间
+            llm_start_time = time.time()
+            
             # 检查是否有流式回调函数
             stream_callback = getattr(self, 'stream_callback', None)
             
@@ -230,10 +237,17 @@ class AgentLoop:
                 stream=bool(stream_callback),
                 stream_callback=stream_callback
             )
+            
+            # 记录LLM调用结束时间并计算耗时
+            llm_end_time = time.time()
+            llm_duration = llm_end_time - llm_start_time
+            logger.info(f"[LOOP] ⏱️  LLM调用耗时: {llm_duration:.3f}秒")
 
             # Log LLM response
-            response_preview = response.content[:200] if response.content else "(no content)"
-            logger.info(f"[LOOP] 🤖 LLM response: {response_preview}...")
+            response_preview = response.content if response.content else "(no content)"
+            logger.info(f"[LOOP] 🤖 LLM response content: {response_preview}")
+            logger.info(f"[LOOP] 🤖 LLM response has_tool_calls: {response.has_tool_calls}")
+
             if response.has_tool_calls:
                 logger.info(f"[LOOP] 🔧 LLM requested {len(response.tool_calls)} tool call(s)")
                 for tc in response.tool_calls:
@@ -272,22 +286,35 @@ class AgentLoop:
                     logger.info(f"[LOOP] 🔧 工具输入: {args_str[:500]}...")
 
                     # 记录开始时间
-                    import time
                     start_time = time.time()
 
-                    result = await self.tools.execute(tool_name, tool_args)
+                    try:
+                        result = await self.tools.execute(tool_name, tool_args)
+                        
+                        # 计算执行耗时
+                        end_time = time.time()
+                        duration = end_time - start_time
 
-                    # 计算执行耗时
-                    end_time = time.time()
-                    duration = end_time - start_time
+                        result_preview = str(result)[:300] if result else "(empty result)"
+                        logger.info(f"[LOOP] 🔧 工具输出: {result_preview}...")
+                        logger.info(f"[LOOP] ⏱️  工具执行耗时: {duration:.3f}秒")
 
-                    result_preview = str(result)[:300] if result else "(empty result)"
-                    logger.info(f"[LOOP] 🔧 工具输出: {result_preview}...")
-                    logger.info(f"[LOOP] ⏱️  工具执行耗时: {duration:.3f}秒")
-
-                    messages = self.context.add_tool_result(
-                        messages, tool_call.id, tool_name, result
-                    )
+                        messages = self.context.add_tool_result(
+                            messages, tool_call.id, tool_name, result
+                        )
+                    except Exception as e:
+                        # 计算执行耗时
+                        end_time = time.time()
+                        duration = end_time - start_time
+                        
+                        error_msg = f"工具执行失败: {str(e)}"
+                        logger.error(f"[LOOP] ❌ {error_msg}")
+                        logger.error(f"[LOOP] ⏱️  工具执行耗时: {duration:.3f}秒")
+                        
+                        # 添加错误结果到消息中
+                        messages = self.context.add_tool_result(
+                            messages, tool_call.id, tool_name, error_msg
+                        )
             else:
                 # No tool calls, we're done
                 fallback_content = await self._fallback_exec_on_empty_response(
@@ -304,6 +331,17 @@ class AgentLoop:
         logger.info(f"[LOOP] 📤 Final response generated (length: {len(final_content)} chars)")
         preview = final_content[:120] + "..." if len(final_content) > 120 else final_content
         logger.info(f"[LOOP] 📤 Response preview: {preview}")
+
+        # 计算整个消息处理的总耗时
+        process_end_time = time.time()
+        process_duration = process_end_time - process_start_time
+        logger.info(f"[LOOP] ⏱️  整个消息处理总耗时: {process_duration:.3f}秒")
+        
+        # 记录详细的耗时统计
+        logger.info(f"[LOOP] 📊 耗时统计详情:")
+        logger.info(f"[LOOP] 📊 - LLM调用总耗时: {llm_duration:.3f}秒")
+        logger.info(f"[LOOP] 📊 - 工具执行总耗时: {process_duration - llm_duration:.3f}秒")
+        logger.info(f"[LOOP] 📊 - 总迭代次数: {iteration}次")
 
         # Save to session
         session.add_message("user", msg.content)
@@ -364,15 +402,26 @@ class AgentLoop:
         # Agent loop (limited for announce handling)
         iteration = 0
         final_content = None
+        
+        # 记录整个系统消息处理的开始时间
+        process_start_time = time.time()
+        llm_duration = 0.0
 
         while iteration < self.max_iterations:
             iteration += 1
 
+            # 记录LLM调用开始时间
+            llm_start_time = time.time()
+            
             response = await self.provider.chat(
                 messages=messages,
                 tools=self.tools.get_definitions(),
                 model=self.model
             )
+            
+            # 记录LLM调用结束时间并计算耗时
+            llm_end_time = time.time()
+            llm_duration += llm_end_time - llm_start_time
 
             if response.has_tool_calls:
                 tool_call_dicts = [
@@ -402,28 +451,52 @@ class AgentLoop:
                     logger.info(f"[SYSTEM] 🔧 工具输入: {args_str[:200]}...")
 
                     # 记录开始时间
-                    import time
                     start_time = time.time()
 
-                    result = await self.tools.execute(tool_name, tool_args)
+                    try:
+                        result = await self.tools.execute(tool_name, tool_args)
+                        
+                        # 计算执行耗时
+                        end_time = time.time()
+                        duration = end_time - start_time
 
-                    # 计算执行耗时
-                    end_time = time.time()
-                    duration = end_time - start_time
+                        result_preview = str(result)[:300] if result else "(empty result)"
+                        logger.info(f"[SYSTEM] 🔧 工具输出: {result_preview}...")
+                        logger.info(f"[SYSTEM] ⏱️  工具执行耗时: {duration:.3f}秒")
 
-                    result_preview = str(result)[:300] if result else "(empty result)"
-                    logger.info(f"[SYSTEM] 🔧 工具输出: {result_preview}...")
-                    logger.info(f"[SYSTEM] ⏱️  工具执行耗时: {duration:.3f}秒")
-
-                    messages = self.context.add_tool_result(
-                        messages, tool_call.id, tool_name, result
-                    )
+                        messages = self.context.add_tool_result(
+                            messages, tool_call.id, tool_name, result
+                        )
+                    except Exception as e:
+                        # 计算执行耗时
+                        end_time = time.time()
+                        duration = end_time - start_time
+                        
+                        error_msg = f"工具执行失败: {str(e)}"
+                        logger.error(f"[SYSTEM] ❌ {error_msg}")
+                        logger.error(f"[SYSTEM] ⏱️  工具执行耗时: {duration:.3f}秒")
+                        
+                        # 添加错误结果到消息中
+                        messages = self.context.add_tool_result(
+                            messages, tool_call.id, tool_name, error_msg
+                        )
             else:
                 final_content = response.content
                 break
 
         if final_content is None:
             final_content = "Background task completed."
+
+        # 计算整个系统消息处理的总耗时
+        process_end_time = time.time()
+        process_duration = process_end_time - process_start_time
+        logger.info(f"[SYSTEM] ⏱️  系统消息处理总耗时: {process_duration:.3f}秒")
+        
+        # 记录详细的耗时统计
+        logger.info(f"[SYSTEM] 📊 耗时统计详情:")
+        logger.info(f"[SYSTEM] 📊 - LLM调用总耗时: {llm_duration:.3f}秒")
+        logger.info(f"[SYSTEM] 📊 - 工具执行总耗时: {process_duration - llm_duration:.3f}秒")
+        logger.info(f"[SYSTEM] 📊 - 总迭代次数: {iteration}次")
 
         # Save to session (mark as system message in history)
         session.add_message("user", f"[System: {msg.sender_id}] {msg.content}")
@@ -566,3 +639,115 @@ class AgentLoop:
 
         response = await self._process_message(msg)
         return response.content if response else ""
+
+    async def stream_callback(self, context_info: dict) -> None:
+        """
+        流式回调函数，能够区分不同类型的LLM响应内容。
+        
+        Args:
+            context_info: 包含流式响应上下文信息的字典，包含：
+                - content: 内容块
+                - model: 模型名称
+                - is_tool_call: 是否是工具调用
+                - is_reasoning: 是否是推理内容
+                - is_final_answer: 是否是最终答案
+                - total_length: 总内容长度
+                - chunk_index: 当前块索引
+        """
+        # 安全获取content参数，处理可能的字典类型
+        content = context_info.get("content", "")
+        
+        # 如果content是字典，提取content字段
+        if isinstance(content, dict):
+            content = content.get("content", "")
+        
+        # 确保content是字符串类型
+        if not isinstance(content, str):
+            logger.warning(f"[STREAM] ⚠️ Invalid content type: {type(content)}")
+            logger.warning(f"[STREAM] ⚠️ content: {content}")
+            content = str(content)
+        
+        if not content.strip():
+            return
+        
+        # 根据上下文信息确定响应类型
+        response_type = self._determine_response_type(context_info)
+        
+        # 根据类型进行不同的处理
+        if response_type == "reasoning":
+            # 意图识别或推理过程
+            logger.info(f"[STREAM] 🤔 意图识别 (模型: {context_info.get('model', 'unknown')}): {content}")
+            # 这里可以调用UI更新方法，显示意图识别内容
+            
+        elif response_type == "tool_call":
+            # 工具调用
+            logger.info(f"[STREAM] 🔧 工具执行 (模型: {context_info.get('model', 'unknown')}): {content}")
+            # 这里可以调用UI更新方法，显示工具执行内容
+            
+        elif response_type == "final_answer":
+            # 最终答案
+            logger.info(f"[STREAM] 💬 最终回答 (模型: {context_info.get('model', 'unknown')}): {content}")
+            # 这里可以调用UI更新方法，显示最终回答内容
+            
+        else:
+            # 普通文本内容
+            logger.info(f"[STREAM] 📝 普通内容 (模型: {context_info.get('model', 'unknown')}): {content}")
+            # 这里可以调用UI更新方法，显示普通内容
+    
+    def _determine_response_type(self, context_info: dict) -> str:
+        """
+        基于上下文信息确定响应内容的类型。
+        
+        Args:
+            context_info: 包含流式响应上下文信息的字典
+            
+        Returns:
+            响应类型："reasoning"、"tool_call"、"final_answer"、"normal"
+        """
+        # 安全获取content参数，处理可能的字典类型
+        content = context_info.get("content", "")
+        
+        # 如果content是字典，提取content字段
+        if isinstance(content, dict):
+            content = content.get("content", "")
+        
+        # 确保content是字符串类型
+        if not isinstance(content, str):
+            logger.warning(f"Unexpected content type: {type(content)}")
+            logger.warning(f"Unexpected content: {content}")
+            content = str(content)
+        
+        content_lower = content.lower().strip()
+        
+        # 优先使用上下文信息中的标志
+        if context_info.get("is_tool_call", False):
+            return "tool_call"
+        
+        if context_info.get("is_reasoning", False):
+            return "reasoning"
+        
+        if context_info.get("is_final_answer", False):
+            return "final_answer"
+        
+        # 如果没有上下文标志，则基于内容分析
+        
+        # 检查是否是推理/意图识别内容
+        reasoning_keywords = ["think", "reason", "analyze", "consider", "plan", "strategy", "步骤", "思考", "分析"]
+        if any(keyword in content_lower for keyword in reasoning_keywords):
+            return "reasoning"
+        
+        # 检查是否是工具调用
+        tool_keywords = ["tool", "function", "call", "execute", "run", "工具", "函数", "调用", "执行"]
+        if any(keyword in content_lower for keyword in tool_keywords):
+            return "tool_call"
+        
+        # 检查是否是最终答案的开始
+        answer_keywords = ["answer", "result", "conclusion", "summary", "回答", "结果", "结论", "总结"]
+        if any(keyword in content_lower for keyword in answer_keywords):
+            return "final_answer"
+        
+        # 检查JSON格式的工具调用
+        if content.strip().startswith('{') and 'name' in content_lower and 'arguments' in content_lower:
+            return "tool_call"
+        
+        return "normal"

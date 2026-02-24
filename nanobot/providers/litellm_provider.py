@@ -1,5 +1,6 @@
 """LiteLLM provider implementation for multi-provider support."""
 
+import asyncio
 import json
 import os
 import re
@@ -177,9 +178,23 @@ class LiteLLMProvider(LLMProvider):
                             content_chunk = delta.content
                             full_content += content_chunk
                             
-                            # 调用流式回调函数
+                            # 调用流式回调函数，传递更多上下文信息
                             if stream_callback:
-                                stream_callback(content_chunk)
+                                # 创建上下文信息字典
+                                context_info = {
+                                    "content": content_chunk,
+                                    "model": model,
+                                    "is_tool_call": hasattr(delta, 'tool_calls') and delta.tool_calls,
+                                    "is_reasoning": self._is_reasoning_content(content_chunk),
+                                    "is_final_answer": self._is_final_answer_content(content_chunk),
+                                    "total_length": len(full_content),
+                                    "chunk_index": len(full_content) - len(content_chunk)
+                                }
+                                
+                                if asyncio.iscoroutinefunction(stream_callback):
+                                    await stream_callback(context_info)
+                                else:
+                                    stream_callback(context_info)
                 
                 # 计算耗时
                 end_time = time.time()
@@ -202,7 +217,43 @@ class LiteLLMProvider(LLMProvider):
                 class MockMessage:
                     def __init__(self, content):
                         self.content = content
-                        self.tool_calls = None
+                        # 解析content中的工具调用
+                        self.tool_calls = self._parse_tool_calls_from_content(content)
+                    
+                    def _parse_tool_calls_from_content(self, content: str):
+                        """从流式输出的完整内容中解析工具调用。"""
+                        import re
+                        import json
+                        
+                        # 查找JSON格式的工具调用
+                        tool_call_pattern = r'\{\s*"name"\s*:\s*"([^"]+)"\s*,\s*"arguments"\s*:\s*(\{[^}]+\})\s*\}'
+                        matches = re.findall(tool_call_pattern, content)
+                        
+                        if not matches:
+                            return None
+                        
+                        tool_calls = []
+                        for name, args_str in matches:
+                            try:
+                                # 解析参数
+                                args = json.loads(args_str)
+                                
+                                # 创建模拟的ToolCall对象
+                                class ToolCall:
+                                    def __init__(self, name, args):
+                                        self.function = Function(name, args)
+                                        self.id = f"call_{len(tool_calls)}"
+                                
+                                class Function:
+                                    def __init__(self, name, args):
+                                        self.name = name
+                                        self.arguments = args
+                                
+                                tool_calls.append(ToolCall(name, args))
+                            except json.JSONDecodeError:
+                                continue
+                        
+                        return tool_calls if tool_calls else None
                 
                 mock_response = MockResponse(full_content)
                 return self._parse_response(mock_response, tools)
@@ -230,6 +281,38 @@ class LiteLLMProvider(LLMProvider):
                 content=f"Error calling LLM: {str(e)}",
                 finish_reason="error",
             )
+    
+    def _is_reasoning_content(self, content: str | dict) -> bool:
+        """判断内容是否是推理/意图识别内容。"""
+        # 处理字典参数（流式回调传递的上下文信息）
+        
+        # 安全处理各种类型的content参数
+        if isinstance(content, dict):
+            content = content.get("content", "")
+        
+        # 确保content是字符串类型
+        if not isinstance(content, str):
+            content = str(content)
+        
+        content_lower = content.lower().strip()
+        reasoning_keywords = ["think", "reason", "analyze", "consider", "plan", "strategy", "步骤", "思考", "分析"]
+        return any(keyword in content_lower for keyword in reasoning_keywords)
+    
+    def _is_final_answer_content(self, content: str | dict) -> bool:
+        """判断内容是否是最终答案内容。"""
+        # 处理字典参数（流式回调传递的上下文信息）
+
+        # 安全处理各种类型的content参数
+        if isinstance(content, dict):
+            content = content.get("content", "")
+        
+        # 确保content是字符串类型
+        if not isinstance(content, str):
+            content = str(content)
+        
+        content_lower = content.lower().strip()
+        answer_keywords = ["answer", "result", "conclusion", "summary", "回答", "结果", "结论", "总结"]
+        return any(keyword in content_lower for keyword in answer_keywords)
     
     def _parse_response(
         self,

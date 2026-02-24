@@ -1,15 +1,13 @@
 """Web interface for nanobot."""
 
-import asyncio
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse
-
-from nanobot import __logo__
+from loguru import logger
 
 
 class ConnectionManager:
     """Manage WebSocket connections."""
-    
+
     def __init__(self):
         self.active_connections: list[WebSocket] = []
 
@@ -685,10 +683,10 @@ async def process_user_message_streaming(user_input: str, websocket: WebSocket):
     from nanobot.agent.loop import AgentLoop
 
     start_time = time.time()
-    
+
     config = load_config()
     bus = MessageBus()
-    
+
     # Create provider from config
     from nanobot.providers.litellm_provider import LiteLLMProvider
     p = config.get_provider()
@@ -696,7 +694,7 @@ async def process_user_message_streaming(user_input: str, websocket: WebSocket):
     if not (p and p.api_key) and not model.startswith("bedrock/"):
         await websocket.send_text("Error: No API key configured. Please set one in ~/.nanobot/config.json")
         return
-    
+
     provider = LiteLLMProvider(
         api_key=p.api_key if p else None,
         api_base=config.get_api_base(),
@@ -716,26 +714,37 @@ async def process_user_message_streaming(user_input: str, websocket: WebSocket):
 
     # Send initial processing message
     await websocket.send_text("🤖 AI Agent is processing your request...\n\n")
-    
+
     # Record LLM start time
     llm_start_time = time.time()
-    
+
     # 设置流式回调函数
     async def stream_callback(chunk: str):
         """流式输出回调函数"""
-        if chunk.strip():
-            await websocket.send_text(chunk)
-    
+        _content = ''
+        if isinstance(chunk, dict):
+            _content = chunk.get('content', '')
+
+        if isinstance(chunk, str):
+            _content = chunk
+
+        if not _content:
+            _content = 'no response from llm chunk'
+            logger.warning(f"No content in chunk: {chunk}")
+
+        if _content.strip():
+            await websocket.send_text(_content)
+
     # 为agent_loop设置流式回调
     agent_loop.stream_callback = stream_callback
-    
+
     # Process with streaming output
     response = await agent_loop.process_direct(user_input, session_key="cli:webui")
-    
+
     # Record LLM end time
     llm_end_time = time.time()
     llm_execution_time = round(llm_end_time - llm_start_time, 1)
-    
+
     # Send the actual response (如果流式输出已经发送了内容，这里可能不需要再发送)
     if response and response.strip():
         # 检查是否已经通过流式输出发送了内容
@@ -743,10 +752,10 @@ async def process_user_message_streaming(user_input: str, websocket: WebSocket):
         await websocket.send_text("\n" + response)
     elif not response:
         await websocket.send_text("No response from agent.")
-    
+
     end_time = time.time()
     total_processing_time = round(end_time - start_time, 1)
-    
+
     # Send processing times
     await websocket.send_text(f"\n---\n*总耗时: {total_processing_time}秒 | LLM执行耗时: {llm_execution_time}秒*")
 
@@ -759,17 +768,17 @@ async def process_user_message(user_input: str) -> str:
     from nanobot.agent.loop import AgentLoop
 
     start_time = time.time()
-    
+
     config = load_config()
     bus = MessageBus()
-    
+
     # Create provider from config
     from nanobot.providers.litellm_provider import LiteLLMProvider
     p = config.get_provider()
     model = config.agents.defaults.model
     if not (p and p.api_key) and not model.startswith("bedrock/"):
         return "Error: No API key configured. Please set one in ~/.nanobot/config.json"
-    
+
     provider = LiteLLMProvider(
         api_key=p.api_key if p else None,
         api_base=config.get_api_base(),
@@ -789,16 +798,16 @@ async def process_user_message(user_input: str) -> str:
 
     # Record LLM start time
     llm_start_time = time.time()
-    
+
     response = await agent_loop.process_direct(user_input, session_key="cli:webui")
-    
+
     # Record LLM end time
     llm_end_time = time.time()
     llm_execution_time = round(llm_end_time - llm_start_time, 1)
-    
+
     end_time = time.time()
     total_processing_time = round(end_time - start_time, 1)
-    
+
     if response:
         return f"{response}\n\n---\n*总耗时: {total_processing_time}秒 | LLM执行耗时: {llm_execution_time}秒*"
     else:

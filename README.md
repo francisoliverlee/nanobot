@@ -208,10 +208,11 @@ nanobot agent -m "Hello from my Ollama LLM!"
 
 ## 💬 Chat Apps
 
-Talk to your nanobot through Telegram, Discord, WhatsApp, Feishu, Mochat, DingTalk, Slack, Email, or QQ — anytime, anywhere.
+Talk to your nanobot through Telegram, Discord, WhatsApp, Feishu, Mochat, DingTalk, Slack, Email, QQ, or WebUI — anytime, anywhere.
 
 | Channel | Setup |
 |---------|-------|
+| **WebUI** | Easy (built-in web interface) |
 | **Telegram** | Easy (just a token) |
 | **Discord** | Easy (bot token + intents) |
 | **WhatsApp** | Medium (scan QR) |
@@ -221,6 +222,96 @@ Talk to your nanobot through Telegram, Discord, WhatsApp, Feishu, Mochat, DingTa
 | **Slack** | Medium (bot + app tokens) |
 | **Email** | Medium (IMAP/SMTP credentials) |
 | **QQ** | Easy (app credentials) |
+
+<details>
+<summary><b>WebUI</b> (Built-in Web Interface)</summary>
+
+nanobot includes a **built-in web interface** that provides a modern, responsive chat experience accessible from any browser.
+
+**1. Start the WebUI server**
+
+```bash
+# Start the web interface on port 8000 (default)
+nanobot webui
+
+# Or specify a custom port
+nanobot webui --port 8080
+
+# Start with debug mode for development
+nanobot webui --debug
+```
+
+**2. Access the WebUI**
+
+Open your browser and navigate to:
+- **Local**: http://localhost:8000
+- **Custom port**: http://localhost:8080 (if using --port)
+
+**3. Configure (optional)**
+
+Add WebUI-specific settings to `~/.nanobot/config.json`:
+
+```json
+{
+  "webui": {
+    "enabled": true,
+    "port": 8000,
+    "host": "0.0.0.0",
+    "debug": false,
+    "cors_origins": ["http://localhost:3000", "https://your-domain.com"]
+  }
+}
+```
+
+**4. Features**
+
+- 🎨 **Modern Interface**: Clean, responsive design that works on desktop and mobile
+- 💬 **Real-time Chat**: WebSocket-based real-time messaging with typing indicators
+- 📱 **Mobile Friendly**: Optimized for mobile devices
+- 🔄 **Streaming Responses**: Watch responses stream in real-time
+- 📋 **Copy & Share**: Easy copy buttons for messages
+- 🌙 **Dark/Light Mode**: Automatic theme switching based on system preferences
+- 🔒 **Session Management**: Persistent chat sessions with history
+
+**5. Docker Usage**
+
+When running nanobot in Docker, expose the WebUI port:
+
+```bash
+docker run -v ~/.nanobot:/root/.nanobot -p 8000:8000 nanobot webui
+```
+
+**6. Development Mode**
+
+For development, start with hot reload:
+
+```bash
+# Install development dependencies
+pip install -e ".[dev]"
+
+# Start with auto-reload
+nanobot webui --debug --reload
+```
+
+**7. API Endpoints**
+
+The WebUI also exposes a REST API for programmatic access:
+
+- `GET /api/health` - Health check
+- `POST /api/chat` - Send message to agent
+- `GET /api/sessions` - List chat sessions
+- `GET /api/sessions/{session_id}` - Get session history
+
+**Example API Usage:**
+
+```bash
+# Send a message via API
+curl -X POST http://localhost:8000/api/chat \
+  -H "Content-Type: application/json" \
+  -d '{"message": "Hello nanobot!", "session_id": "optional-session-id"}'
+```
+
+</details>
 
 <details>
 <summary><b>Telegram</b> (Recommended)</summary>
@@ -646,25 +737,30 @@ Config file: `~/.nanobot/config.json`
 nanobot uses a **Provider Registry** (`nanobot/providers/registry.py`) as the single source of truth.
 Adding a new provider only takes **2 steps** — no if-elif chains to touch.
 
-**Step 1.** Add a `ProviderSpec` entry to `PROVIDERS` in `nanobot/providers/registry.py`:
+**Step 1.** Add a provider specification entry to the providers registry:
 
 ```python
-ProviderSpec(
-    name="myprovider",                   # config field name
-    keywords=("myprovider", "mymodel"),  # model-name keywords for auto-matching
-    env_key="MYPROVIDER_API_KEY",        # env var for LiteLLM
-    display_name="My Provider",          # shown in `nanobot status`
-    litellm_prefix="myprovider",         # auto-prefix: model → myprovider/model
-    skip_prefixes=("myprovider/",),      # don't double-prefix
-)
+# In nanobot/providers/registry.py, add to the PROVIDERS list
+PROVIDERS = [
+    # ... existing providers ...
+    {
+        "name": "myprovider",                   # config field name
+        "keywords": ("myprovider", "mymodel"),  # model-name keywords for auto-matching
+        "env_key": "MYPROVIDER_API_KEY",        # env var for LiteLLM
+        "display_name": "My Provider",          # shown in `nanobot status`
+        "litellm_prefix": "myprovider",         # auto-prefix: model → myprovider/model
+        "skip_prefixes": ("myprovider/",),      # don't double-prefix
+    },
+]
 ```
 
-**Step 2.** Add a field to `ProvidersConfig` in `nanobot/config/schema.py`:
+**Step 2.** Add a field to the providers configuration schema:
 
 ```python
-class ProvidersConfig(BaseModel):
-    ...
-    myprovider: ProviderConfig = ProviderConfig()
+# In nanobot/config/schema.py, add to the ProvidersConfig class
+class ProvidersConfig:
+    # ... existing provider fields ...
+    myprovider: dict = {}  # Provider configuration
 ```
 
 That's it! Environment variables, model prefixing, config matching, and `nanobot status` display will all work automatically.
