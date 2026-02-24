@@ -65,14 +65,14 @@ class ContextBuilder:
                 parts.append(f"# Active Skills\n\n{always_content}")
         
         # 2. Available skills: only show summary (agent uses read_file to load)
-        skills_summary = self.skills.build_skills_summary()
-        if skills_summary:
-            parts.append(f"""# Skills
-
-The following skills extend your capabilities. To use a skill, read its SKILL.md file using the read_file tool.
-Skills with available="false" need dependencies installed first - you can try installing them with apt/brew.
-
-{skills_summary}""")
+#         skills_summary = self.skills.build_skills_summary()
+#         if skills_summary:
+#             parts.append(f"""# Skills
+#
+# The following skills extend your capabilities. To use a skill, read its SKILL.md file using the read_file tool.
+# Skills with available="false" need dependencies installed first - you can try installing them with apt/brew.
+#
+# {skills_summary}""")
         
         return "\n\n---\n\n".join(parts)
     
@@ -170,7 +170,7 @@ Skills with available="false" need dependencies installed first - you can try in
         messages.append({"role": "system", "content": system_prompt})
 
         # History
-        messages.extend(history)
+        # messages.extend(history)
 
         # Current message (with optional image attachments)
         user_content = self._build_user_content(current_message, media)

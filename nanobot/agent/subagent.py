@@ -99,9 +99,9 @@ class SubagentManager:
             # Build subagent tools (no message tool, no spawn tool)
             tools = ToolRegistry()
             allowed_dir = self.workspace if self.restrict_to_workspace else None
-            tools.register(ReadFileTool(allowed_dir=allowed_dir))
-            tools.register(WriteFileTool(allowed_dir=allowed_dir))
-            tools.register(ListDirTool(allowed_dir=allowed_dir))
+            # tools.register(ReadFileTool(allowed_dir=allowed_dir))
+            # tools.register(WriteFileTool(allowed_dir=allowed_dir))
+            # tools.register(ListDirTool(allowed_dir=allowed_dir))
             tools.register(ExecTool(
                 working_dir=str(self.workspace),
                 timeout=self.exec_config.timeout,
@@ -152,9 +152,24 @@ class SubagentManager:
                     
                     # Execute tools
                     for tool_call in response.tool_calls:
-                        args_str = json.dumps(tool_call.arguments)
-                        logger.debug(f"Subagent [{task_id}] executing: {tool_call.name} with arguments: {args_str}")
+                        args_str = json.dumps(tool_call.arguments, ensure_ascii=False)
+                        logger.info(f"[SUBAGENT-{task_id}] 🔧 执行工具: {tool_call.name}")
+                        logger.info(f"[SUBAGENT-{task_id}] 🔧 工具输入: {args_str[:200]}...")
+                        
+                        # 记录开始时间
+                        import time
+                        start_time = time.time()
+                        
                         result = await tools.execute(tool_call.name, tool_call.arguments)
+                        
+                        # 计算执行耗时
+                        end_time = time.time()
+                        duration = end_time - start_time
+                        
+                        result_preview = str(result)[:300] if result else "(empty result)"
+                        logger.info(f"[SUBAGENT-{task_id}] 🔧 工具输出: {result_preview}...")
+                        logger.info(f"[SUBAGENT-{task_id}] ⏱️  工具执行耗时: {duration:.3f}秒")
+                        
                         messages.append({
                             "role": "tool",
                             "tool_call_id": tool_call.id,

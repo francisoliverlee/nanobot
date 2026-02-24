@@ -41,6 +41,8 @@ dependencies = [
     "sentence-transformers>=2.2.0",
     "langchain>=0.1.0",
     "langchain-text-splitters>=0.0.1",
+    "fastapi>=0.68.0",
+    "uvicorn[standard]>=0.15.0",
 ]
 
 [project.optional-dependencies]
@@ -52,7 +54,7 @@ dev = [
 ]
 
 [project.scripts]
-nanobot = "nanobot.cli.commands:app"
+nanobot = "nanobot.cli.commands:cli_app"
 
 [build-system]
 requires = ["hatchling"]

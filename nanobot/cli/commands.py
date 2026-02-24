@@ -3,10 +3,10 @@
 import asyncio
 import atexit
 import os
-import signal
-from pathlib import Path
 import select
+import signal
 import sys
+from pathlib import Path
 
 import typer
 from rich.console import Console
@@ -17,12 +17,11 @@ from rich.text import Text
 
 from nanobot import __version__, __logo__
 
-app = typer.Typer(
+cli_app = typer.Typer(
     name="nanobot",
     help=f"{__logo__} nanobot - Personal AI Assistant",
     no_args_is_help=True,
 )
-
 console = Console()
 EXIT_COMMANDS = {"exit", "quit", "/exit", "/quit", ":q"}
 
@@ -172,11 +171,11 @@ def version_callback(value: bool):
         raise typer.Exit()
 
 
-@app.callback()
+@cli_app.callback()
 def main(
-    version: bool = typer.Option(
-        None, "--version", "-v", callback=version_callback, is_eager=True
-    ),
+        version: bool = typer.Option(
+            None, "--version", "-v", callback=version_callback, is_eager=True
+        ),
 ):
     """nanobot - Personal AI Assistant."""
     pass
@@ -187,40 +186,38 @@ def main(
 # ============================================================================
 
 
-@app.command()
+@cli_app.command()
 def onboard():
     """Initialize nanobot configuration and workspace."""
     from nanobot.config.loader import get_config_path, save_config
     from nanobot.config.schema import Config
     from nanobot.utils.helpers import get_workspace_path
-    
+
     config_path = get_config_path()
-    
+
     if config_path.exists():
         console.print(f"[yellow]Config already exists at {config_path}[/yellow]")
         if not typer.confirm("Overwrite?"):
             raise typer.Exit()
-    
+
     # Create default config
     config = Config()
     save_config(config)
     console.print(f"[green]✓[/green] Created config at {config_path}")
-    
+
     # Create workspace
     workspace = get_workspace_path()
     console.print(f"[green]✓[/green] Created workspace at {workspace}")
-    
+
     # Create default bootstrap files
     _create_workspace_templates(workspace)
-    
+
     console.print(f"\n{__logo__} nanobot is ready!")
     console.print("\nNext steps:")
     console.print("  1. Add your API key to [cyan]~/.nanobot/config.json[/cyan]")
     console.print("     Get one at: https://openrouter.ai/keys")
     console.print("  2. Chat: [cyan]nanobot agent -m \"Hello!\"[/cyan]")
     console.print("\n[dim]Want Telegram/WhatsApp? See: https://github.com/HKUDS/nanobot#-chat-apps[/dim]")
-
-
 
 
 def _create_workspace_templates(workspace: Path):
@@ -264,13 +261,13 @@ Information about the user goes here.
 - Language: (your preferred language)
 """,
     }
-    
+
     for filename, content in templates.items():
         file_path = workspace / filename
         if not file_path.exists():
             file_path.write_text(content)
             console.print(f"  [dim]Created {filename}[/dim]")
-    
+
     # Create memory directory and MEMORY.md
     memory_dir = workspace / "memory"
     memory_dir.mkdir(exist_ok=True)
@@ -322,10 +319,10 @@ def _make_provider(config):
 # ============================================================================
 
 
-@app.command()
+@cli_app.command()
 def gateway(
-    port: int = typer.Option(18790, "--port", "-p", help="Gateway port"),
-    verbose: bool = typer.Option(False, "--verbose", "-v", help="Verbose output"),
+        port: int = typer.Option(18790, "--port", "-p", help="Gateway port"),
+        verbose: bool = typer.Option(False, "--verbose", "-v", help="Verbose output"),
 ):
     """Start the nanobot gateway."""
     from nanobot.config.loader import load_config, get_data_dir
@@ -336,22 +333,22 @@ def gateway(
     from nanobot.cron.service import CronService
     from nanobot.cron.types import CronJob
     from nanobot.heartbeat.service import HeartbeatService
-    
+
     if verbose:
         import logging
         logging.basicConfig(level=logging.DEBUG)
-    
+
     console.print(f"{__logo__} Starting nanobot gateway on port {port}...")
-    
+
     config = load_config()
     bus = MessageBus()
     provider = _make_provider(config)
     session_manager = SessionManager(config.workspace_path)
-    
+
     # Create cron service first (callback set after agent creation)
     cron_store_path = get_data_dir() / "cron" / "jobs.json"
     cron = CronService(cron_store_path)
-    
+
     # Create agent with cron service
     agent = AgentLoop(
         bus=bus,
@@ -365,7 +362,7 @@ def gateway(
         restrict_to_workspace=config.tools.restrict_to_workspace,
         session_manager=session_manager,
     )
-    
+
     # Set cron callback (needs agent)
     async def on_cron_job(job: CronJob) -> str | None:
         """Execute a cron job through the agent."""
@@ -383,34 +380,35 @@ def gateway(
                 content=response or ""
             ))
         return response
+
     cron.on_job = on_cron_job
-    
+
     # Create heartbeat service
     async def on_heartbeat(prompt: str) -> str:
         """Execute heartbeat through the agent."""
         return await agent.process_direct(prompt, session_key="heartbeat")
-    
+
     heartbeat = HeartbeatService(
         workspace=config.workspace_path,
         on_heartbeat=on_heartbeat,
         interval_s=30 * 60,  # 30 minutes
         enabled=True
     )
-    
+
     # Create channel manager
     channels = ChannelManager(config, bus, session_manager=session_manager)
-    
+
     if channels.enabled_channels:
         console.print(f"[green]✓[/green] Channels enabled: {', '.join(channels.enabled_channels)}")
     else:
         console.print("[yellow]Warning: No channels enabled[/yellow]")
-    
+
     cron_status = cron.status()
     if cron_status["jobs"] > 0:
         console.print(f"[green]✓[/green] Cron: {cron_status['jobs']} scheduled jobs")
-    
+
     console.print(f"[green]✓[/green] Heartbeat: every 30m")
-    
+
     async def run():
         try:
             await cron.start()
@@ -425,10 +423,8 @@ def gateway(
             cron.stop()
             agent.stop()
             await channels.stop_all()
-    
+
     asyncio.run(run())
-
-
 
 
 # ============================================================================
@@ -436,21 +432,21 @@ def gateway(
 # ============================================================================
 
 
-@app.command()
+@cli_app.command()
 def agent(
-    message: str = typer.Option(None, "--message", "-m", help="Message to send to the agent"),
-    session_id: str = typer.Option("cli:default", "--session", "-s", help="Session ID"),
-    markdown: bool = typer.Option(True, "--markdown/--no-markdown", help="Render assistant output as Markdown"),
-    logs: bool = typer.Option(False, "--logs/--no-logs", help="Show nanobot runtime logs during chat"),
+        message: str = typer.Option(None, "--message", "-m", help="Message to send to the agent"),
+        session_id: str = typer.Option("cli:default", "--session", "-s", help="Session ID"),
+        markdown: bool = typer.Option(True, "--markdown/--no-markdown", help="Render assistant output as Markdown"),
+        logs: bool = typer.Option(False, "--logs/--no-logs", help="Show nanobot runtime logs during chat"),
 ):
     """Interact with the agent directly."""
     from nanobot.config.loader import load_config
     from nanobot.bus.queue import MessageBus
     from nanobot.agent.loop import AgentLoop
     from loguru import logger
-    
+
     config = load_config()
-    
+
     bus = MessageBus()
     provider = _make_provider(config)
 
@@ -458,7 +454,7 @@ def agent(
         logger.enable("nanobot")
     else:
         logger.disable("nanobot")
-    
+
     agent_loop = AgentLoop(
         bus=bus,
         provider=provider,
@@ -467,7 +463,7 @@ def agent(
         exec_config=config.tools.exec,
         restrict_to_workspace=config.tools.restrict_to_workspace,
     )
-    
+
     # Show spinner when logs are off (no output to miss); skip when logs are on
     def _thinking_ctx():
         if logs:
@@ -481,7 +477,7 @@ def agent(
             with _thinking_ctx():
                 response = await agent_loop.process_direct(message, session_id)
             _print_agent_response(response, render_markdown=markdown)
-        
+
         asyncio.run(run_once())
     else:
         # Interactive mode
@@ -497,7 +493,7 @@ def agent(
             os._exit(0)
 
         signal.signal(signal.SIGINT, _exit_on_sigint)
-        
+
         async def run_interactive():
             while True:
                 try:
@@ -512,7 +508,7 @@ def agent(
                         _restore_terminal()
                         console.print("\nGoodbye!")
                         break
-                    
+
                     with _thinking_ctx():
                         response = await agent_loop.process_direct(user_input, session_id)
                     _print_agent_response(response, render_markdown=markdown)
@@ -526,7 +522,7 @@ def agent(
                     _restore_terminal()
                     console.print("\nGoodbye!")
                     break
-        
+
         asyncio.run(run_interactive())
 
 
@@ -536,7 +532,7 @@ def agent(
 
 
 channels_app = typer.Typer(help="Manage channels")
-app.add_typer(channels_app, name="channels")
+cli_app.add_typer(channels_app, name="channels")
 
 
 @channels_app.command("status")
@@ -583,7 +579,7 @@ def channels_status():
         "✓" if mc.enabled else "✗",
         mc_base
     )
-    
+
     # Telegram
     tg = config.channels.telegram
     tg_config = f"token: {tg.token[:10]}..." if tg.token else "[dim]not configured[/dim]"
@@ -609,57 +605,57 @@ def _get_bridge_dir() -> Path:
     """Get the bridge directory, setting it up if needed."""
     import shutil
     import subprocess
-    
+
     # User's bridge location
     user_bridge = Path.home() / ".nanobot" / "bridge"
-    
+
     # Check if already built
     if (user_bridge / "dist" / "index.js").exists():
         return user_bridge
-    
+
     # Check for npm
     if not shutil.which("npm"):
         console.print("[red]npm not found. Please install Node.js >= 18.[/red]")
         raise typer.Exit(1)
-    
+
     # Find source bridge: first check package data, then source dir
     pkg_bridge = Path(__file__).parent.parent / "bridge"  # nanobot/bridge (installed)
     src_bridge = Path(__file__).parent.parent.parent / "bridge"  # repo root/bridge (dev)
-    
+
     source = None
     if (pkg_bridge / "package.json").exists():
         source = pkg_bridge
     elif (src_bridge / "package.json").exists():
         source = src_bridge
-    
+
     if not source:
         console.print("[red]Bridge source not found.[/red]")
         console.print("Try reinstalling: pip install --force-reinstall nanobot")
         raise typer.Exit(1)
-    
+
     console.print(f"{__logo__} Setting up bridge...")
-    
+
     # Copy to user directory
     user_bridge.parent.mkdir(parents=True, exist_ok=True)
     if user_bridge.exists():
         shutil.rmtree(user_bridge)
     shutil.copytree(source, user_bridge, ignore=shutil.ignore_patterns("node_modules", "dist"))
-    
+
     # Install and build
     try:
         console.print("  Installing dependencies...")
         subprocess.run(["npm", "install"], cwd=user_bridge, check=True, capture_output=True)
-        
+
         console.print("  Building...")
         subprocess.run(["npm", "run", "build"], cwd=user_bridge, check=True, capture_output=True)
-        
+
         console.print("[green]✓[/green] Bridge ready\n")
     except subprocess.CalledProcessError as e:
         console.print(f"[red]Build failed: {e}[/red]")
         if e.stderr:
             console.print(f"[dim]{e.stderr.decode()[:500]}[/dim]")
         raise typer.Exit(1)
-    
+
     return user_bridge
 
 
@@ -667,12 +663,12 @@ def _get_bridge_dir() -> Path:
 def channels_login():
     """Link device via QR code."""
     import subprocess
-    
+
     bridge_dir = _get_bridge_dir()
-    
+
     console.print(f"{__logo__} Starting bridge...")
     console.print("Scan the QR code to connect.\n")
-    
+
     try:
         subprocess.run(["npm", "start"], cwd=bridge_dir, check=True)
     except subprocess.CalledProcessError as e:
@@ -686,33 +682,33 @@ def channels_login():
 # ============================================================================
 
 cron_app = typer.Typer(help="Manage scheduled tasks")
-app.add_typer(cron_app, name="cron")
+cli_app.add_typer(cron_app, name="cron")
 
 
 @cron_app.command("list")
 def cron_list(
-    all: bool = typer.Option(False, "--all", "-a", help="Include disabled jobs"),
+        all: bool = typer.Option(False, "--all", "-a", help="Include disabled jobs"),
 ):
     """List scheduled jobs."""
     from nanobot.config.loader import get_data_dir
     from nanobot.cron.service import CronService
-    
+
     store_path = get_data_dir() / "cron" / "jobs.json"
     service = CronService(store_path)
-    
+
     jobs = service.list_jobs(include_disabled=all)
-    
+
     if not jobs:
         console.print("No scheduled jobs.")
         return
-    
+
     table = Table(title="Scheduled Jobs")
     table.add_column("ID", style="cyan")
     table.add_column("Name")
     table.add_column("Schedule")
     table.add_column("Status")
     table.add_column("Next Run")
-    
+
     import time
     for job in jobs:
         # Format schedule
@@ -722,36 +718,36 @@ def cron_list(
             sched = job.schedule.expr or ""
         else:
             sched = "one-time"
-        
+
         # Format next run
         next_run = ""
         if job.state.next_run_at_ms:
             next_time = time.strftime("%Y-%m-%d %H:%M", time.localtime(job.state.next_run_at_ms / 1000))
             next_run = next_time
-        
+
         status = "[green]enabled[/green]" if job.enabled else "[dim]disabled[/dim]"
-        
+
         table.add_row(job.id, job.name, sched, status, next_run)
-    
+
     console.print(table)
 
 
 @cron_app.command("add")
 def cron_add(
-    name: str = typer.Option(..., "--name", "-n", help="Job name"),
-    message: str = typer.Option(..., "--message", "-m", help="Message for agent"),
-    every: int = typer.Option(None, "--every", "-e", help="Run every N seconds"),
-    cron_expr: str = typer.Option(None, "--cron", "-c", help="Cron expression (e.g. '0 9 * * *')"),
-    at: str = typer.Option(None, "--at", help="Run once at time (ISO format)"),
-    deliver: bool = typer.Option(False, "--deliver", "-d", help="Deliver response to channel"),
-    to: str = typer.Option(None, "--to", help="Recipient for delivery"),
-    channel: str = typer.Option(None, "--channel", help="Channel for delivery (e.g. 'telegram', 'whatsapp')"),
+        name: str = typer.Option(..., "--name", "-n", help="Job name"),
+        message: str = typer.Option(..., "--message", "-m", help="Message for agent"),
+        every: int = typer.Option(None, "--every", "-e", help="Run every N seconds"),
+        cron_expr: str = typer.Option(None, "--cron", "-c", help="Cron expression (e.g. '0 9 * * *')"),
+        at: str = typer.Option(None, "--at", help="Run once at time (ISO format)"),
+        deliver: bool = typer.Option(False, "--deliver", "-d", help="Deliver response to channel"),
+        to: str = typer.Option(None, "--to", help="Recipient for delivery"),
+        channel: str = typer.Option(None, "--channel", help="Channel for delivery (e.g. 'telegram', 'whatsapp')"),
 ):
     """Add a scheduled job."""
     from nanobot.config.loader import get_data_dir
     from nanobot.cron.service import CronService
     from nanobot.cron.types import CronSchedule
-    
+
     # Determine schedule type
     if every:
         schedule = CronSchedule(kind="every", every_ms=every * 1000)
@@ -764,10 +760,10 @@ def cron_add(
     else:
         console.print("[red]Error: Must specify --every, --cron, or --at[/red]")
         raise typer.Exit(1)
-    
+
     store_path = get_data_dir() / "cron" / "jobs.json"
     service = CronService(store_path)
-    
+
     job = service.add_job(
         name=name,
         schedule=schedule,
@@ -776,21 +772,21 @@ def cron_add(
         to=to,
         channel=channel,
     )
-    
+
     console.print(f"[green]✓[/green] Added job '{job.name}' ({job.id})")
 
 
 @cron_app.command("remove")
 def cron_remove(
-    job_id: str = typer.Argument(..., help="Job ID to remove"),
+        job_id: str = typer.Argument(..., help="Job ID to remove"),
 ):
     """Remove a scheduled job."""
     from nanobot.config.loader import get_data_dir
     from nanobot.cron.service import CronService
-    
+
     store_path = get_data_dir() / "cron" / "jobs.json"
     service = CronService(store_path)
-    
+
     if service.remove_job(job_id):
         console.print(f"[green]✓[/green] Removed job {job_id}")
     else:
@@ -799,16 +795,16 @@ def cron_remove(
 
 @cron_app.command("enable")
 def cron_enable(
-    job_id: str = typer.Argument(..., help="Job ID"),
-    disable: bool = typer.Option(False, "--disable", help="Disable instead of enable"),
+        job_id: str = typer.Argument(..., help="Job ID"),
+        disable: bool = typer.Option(False, "--disable", help="Disable instead of enable"),
 ):
     """Enable or disable a job."""
     from nanobot.config.loader import get_data_dir
     from nanobot.cron.service import CronService
-    
+
     store_path = get_data_dir() / "cron" / "jobs.json"
     service = CronService(store_path)
-    
+
     job = service.enable_job(job_id, enabled=not disable)
     if job:
         status = "disabled" if disable else "enabled"
@@ -819,19 +815,19 @@ def cron_enable(
 
 @cron_app.command("run")
 def cron_run(
-    job_id: str = typer.Argument(..., help="Job ID to run"),
-    force: bool = typer.Option(False, "--force", "-f", help="Run even if disabled"),
+        job_id: str = typer.Argument(..., help="Job ID to run"),
+        force: bool = typer.Option(False, "--force", "-f", help="Run even if disabled"),
 ):
     """Manually run a job."""
     from nanobot.config.loader import get_data_dir
     from nanobot.cron.service import CronService
-    
+
     store_path = get_data_dir() / "cron" / "jobs.json"
     service = CronService(store_path)
-    
+
     async def run():
         return await service.run_job(job_id, force=force)
-    
+
     if asyncio.run(run()):
         console.print(f"[green]✓[/green] Job executed")
     else:
@@ -843,7 +839,20 @@ def cron_run(
 # ============================================================================
 
 
-@app.command()
+@cli_app.command()
+def webui(
+        host: str = typer.Option("127.0.0.1", "--host", help="Host to bind"),
+        port: int = typer.Option(8000, "--port", help="Port to bind"),
+):
+    """Start the nanobot Web UI."""
+    import uvicorn
+    from nanobot.web.web import web_app
+    
+    console.print(f"{__logo__} Starting nanobot Web UI on http://{host}:{port}")
+    uvicorn.run(web_app, host=host, port=port)
+
+
+@cli_app.command()
 def status():
     """Show nanobot status."""
     from nanobot.config.loader import load_config, get_config_path
@@ -852,7 +861,7 @@ def status():
     config = load_config()
     workspace = config.workspace_path
 
-    console.print(f"{__logo__} nanobot Status\n")
+    console.print(f"{__logo__} nanobot Status\\n")
 
     console.print(f"Config: {config_path} {'[green]✓[/green]' if config_path.exists() else '[red]✗[/red]'}")
     console.print(f"Workspace: {workspace} {'[green]✓[/green]' if workspace.exists() else '[red]✗[/red]'}")
@@ -861,7 +870,7 @@ def status():
         from nanobot.providers.registry import PROVIDERS
 
         console.print(f"Model: {config.agents.defaults.model}")
-        
+
         # Check API keys from registry
         for spec in PROVIDERS:
             p = getattr(config.providers, spec.name, None)
@@ -878,5 +887,8 @@ def status():
                 console.print(f"{spec.label}: {'[green]✓[/green]' if has_key else '[dim]not set[/dim]'}")
 
 
+
+
+
 if __name__ == "__main__":
-    app()
+    cli_app()

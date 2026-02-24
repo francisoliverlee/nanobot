@@ -4,7 +4,7 @@ import json
 import os
 import re
 import time
-from typing import Any
+from typing import Any, Callable
 
 import litellm
 from litellm import acompletion
@@ -109,6 +109,8 @@ class LiteLLMProvider(LLMProvider):
         model: str | None = None,
         max_tokens: int = 4096,
         temperature: float = 0.7,
+        stream: bool = False,
+        stream_callback: Callable | None = None,
     ) -> LLMResponse:
         """
         Send a chat completion request via LiteLLM.
@@ -119,6 +121,8 @@ class LiteLLMProvider(LLMProvider):
             model: Model identifier (e.g., 'anthropic/claude-sonnet-4-5').
             max_tokens: Maximum tokens in response.
             temperature: Sampling temperature.
+            stream: Whether to stream the response.
+            stream_callback: Callback function for streaming chunks.
         
         Returns:
             LLMResponse with content and/or tool calls.
@@ -159,17 +163,62 @@ class LiteLLMProvider(LLMProvider):
         start_time = time.time()
         
         try:
-            response = await acompletion(**kwargs)
-            
-            # 计算耗时
-            end_time = time.time()
-            duration = end_time - start_time
-            
-            # 记录LLM出参和耗时
-            logger.info(f"[LLM] 调用耗时: {duration:.3f}秒")
-            logger.info(f"[LLM] 出参: {json.dumps(response.model_dump() if hasattr(response, 'model_dump') else str(response), ensure_ascii=False)}")
-            
-            return self._parse_response(response, tools)
+            if stream:
+                # 流式输出模式
+                kwargs["stream"] = True
+                full_content = ""
+                
+                response = await acompletion(**kwargs)
+                
+                async for chunk in response:
+                    if hasattr(chunk, 'choices') and chunk.choices:
+                        delta = chunk.choices[0].delta
+                        if hasattr(delta, 'content') and delta.content:
+                            content_chunk = delta.content
+                            full_content += content_chunk
+                            
+                            # 调用流式回调函数
+                            if stream_callback:
+                                stream_callback(content_chunk)
+                
+                # 计算耗时
+                end_time = time.time()
+                duration = end_time - start_time
+                
+                # 记录LLM出参和耗时
+                logger.info(f"[LLM] 流式调用耗时: {duration:.3f}秒")
+                logger.info(f"[LLM] 流式输出内容长度: {len(full_content)}字符")
+                
+                # 创建一个模拟的response对象用于解析
+                class MockResponse:
+                    def __init__(self, content):
+                        self.choices = [MockChoice(content)]
+                
+                class MockChoice:
+                    def __init__(self, content):
+                        self.message = MockMessage(content)
+                        self.finish_reason = "stop"
+                
+                class MockMessage:
+                    def __init__(self, content):
+                        self.content = content
+                        self.tool_calls = None
+                
+                mock_response = MockResponse(full_content)
+                return self._parse_response(mock_response, tools)
+            else:
+                # 非流式模式（原有逻辑）
+                response = await acompletion(**kwargs)
+                
+                # 计算耗时
+                end_time = time.time()
+                duration = end_time - start_time
+                
+                # 记录LLM出参和耗时
+                logger.info(f"[LLM] 调用耗时: {duration:.3f}秒")
+                logger.info(f"[LLM] 出参: {json.dumps(response.model_dump() if hasattr(response, 'model_dump') else str(response), ensure_ascii=False)}")
+                
+                return self._parse_response(response, tools)
         except Exception as e:
             # 计算失败时的耗时
             end_time = time.time()
