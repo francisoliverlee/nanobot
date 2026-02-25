@@ -1,7 +1,6 @@
 """Knowledge base storage system for domain-specific knowledge."""
 
 import json
-import logging
 from pathlib import Path
 from datetime import datetime
 from typing import Dict, List, Optional, Any, Union
