@@ -13,6 +13,7 @@ from nanobot.agent.context import ContextBuilder
 from nanobot.agent.subagent import SubagentManager
 from nanobot.agent.tools.cron import CronTool
 from nanobot.agent.tools.filesystem import ReadFileTool, WriteFileTool, EditFileTool, ListDirTool
+from nanobot.agent.tools.knowledge import KnowledgeSearchTool
 from nanobot.agent.tools.message import MessageTool
 from nanobot.agent.tools.registry import ToolRegistry
 from nanobot.agent.tools.shell import ExecTool
@@ -118,7 +119,7 @@ class AgentLoop:
         # self.tools.register(MCPKnowledgeSearchTool())
 
         # Knowledge base tools (for local knowledge storage and retrieval)
-        # self.tools.register(KnowledgeSearchTool())
+        self.tools.register(KnowledgeSearchTool())
         # self.tools.register(KnowledgeAddTool())
         # self.tools.register(DomainKnowledgeTool())
         # self.tools.register(KnowledgeExportTool())
