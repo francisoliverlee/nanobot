@@ -6,7 +6,7 @@ from typing import Any, Dict, List, Optional
 from pathlib import Path
 
 from nanobot.agent.tools.base import Tool
-from nanobot.knowledge.store import LegacyKnowledgeStore, DomainKnowledgeManager
+from nanobot.knowledge.store import DomainKnowledgeManager
 from nanobot.config.loader import load_config
 
 
@@ -73,7 +73,9 @@ class KnowledgeSearchTool(Tool):
 
             workspace = Path(config.agents.defaults.workspace)
             
-            store = LegacyKnowledgeStore(workspace)
+            # Use ChromaKnowledgeStore for vector-based semantic search
+            from nanobot.knowledge.store import ChromaKnowledgeStore
+            store = ChromaKnowledgeStore(workspace)
             
             # Search knowledge
             results = store.search_knowledge(
@@ -177,7 +179,9 @@ class KnowledgeAddTool(Tool):
             config = load_config()
             workspace = Path(config.agents.defaults.workspace)
             
-            store = LegacyKnowledgeStore(workspace)
+            # Use ChromaKnowledgeStore for vector-based knowledge storage
+            from nanobot.knowledge.store import ChromaKnowledgeStore
+            store = ChromaKnowledgeStore(workspace)
             
             item_id = store.add_knowledge(
                 domain=domain,
@@ -261,7 +265,9 @@ class DomainKnowledgeTool(Tool):
             config = load_config()
             workspace = Path(config.agents.defaults.workspace)
             
-            store = LegacyKnowledgeStore(workspace)
+            # Use ChromaKnowledgeStore for vector-based knowledge storage
+            from nanobot.knowledge.store import ChromaKnowledgeStore
+            store = ChromaKnowledgeStore(workspace)
             domain_manager = DomainKnowledgeManager(store, "rocketmq")
             
             if action == "search_troubleshooting":
@@ -364,7 +370,9 @@ class KnowledgeExportTool(Tool):
             config = load_config()
             workspace = Path(config.agents.defaults.workspace)
             
-            store = LegacyKnowledgeStore(workspace)
+            # Use ChromaKnowledgeStore for vector-based knowledge storage
+            from nanobot.knowledge.store import ChromaKnowledgeStore
+            store = ChromaKnowledgeStore(workspace)
             
             if format == "json":
                 export_data = store.export_knowledge(domain=domain)

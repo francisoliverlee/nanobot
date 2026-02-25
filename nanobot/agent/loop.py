@@ -922,6 +922,7 @@ class AgentLoop:
                 return None
             
             logger.info(f"[KNOWLEDGE] ✅ 知识库查询成功，返回{len(result)}字符的结果")
+            logger.info(f"[KNOWLEDGE] ✅ 知识库查询成功，{result}")
             
             # 格式化查询结果作为上下文
             knowledge_context = f"""
@@ -955,12 +956,8 @@ class AgentLoop:
         
         # 定义领域关键词映射
         domain_keywords = {
-            "rocketmq": ["rocketmq", "tdmq", "消息队列", "mq", "broker", "namesrv", "nameserver"],
+            "rocketmq": ["rocketmq", "tdmq", "消息队列", "mq", "broker", "namesrv", "nameserver", "cluster", "topic", "consumer", "producer", "group"],
             "kubernetes": ["k8s", "kubernetes", "pod", "deployment", "service", "kubectl", "namespace"],
-            "github": ["github", "git", "repository", "repo", "commit", "pull request", "issue"],
-            "docker": ["docker", "container", "image", "dockerfile", "docker-compose"],
-            "python": ["python", "pip", "pypi", "import", "def", "class", "pytest"],
-            "javascript": ["javascript", "js", "node", "npm", "react", "vue", "typescript"],
             "general": []  # 通用领域，用于没有匹配到特定领域的情况
         }
         

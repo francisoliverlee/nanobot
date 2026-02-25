@@ -7,9 +7,10 @@ when the knowledge system is initialized.
 
 import json
 import re
+from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Any, Optional
-from .store import LegacyKnowledgeStore, DomainKnowledgeManager
+from .store import ChromaKnowledgeStore, DomainKnowledgeManager
 
 # Version control for RocketMQ knowledge
 ROCKETMQ_KNOWLEDGE_VERSION = "1.0.0"
@@ -31,80 +32,155 @@ def get_rocketmq_content_files(base_path: Path) -> List[Path]:
 
 def parse_markdown_file(file_path: Path) -> Dict[str, Any]:
     """Parse markdown file and extract title, content, and metadata."""
+    import logging
+    logger = logging.getLogger("nanobot.knowledge.rocketmq_init")
+    
     if not file_path.exists():
+        logger.warning(f"⚠️  文件不存在: {file_path}")
         return {}
     
-    content = file_path.read_text(encoding='utf-8')
-    
-    # Extract title from first heading
-    title_match = re.search(r'^#\s+(.+)$', content, re.MULTILINE)
-    title = title_match.group(1).strip() if title_match else file_path.stem
-    
-    # Extract tags from file content or path
-    tags = []
-    
-    # Add category as tag based on directory structure
-    parent_dir = file_path.parent.name
-    if parent_dir and not parent_dir.startswith('20'):  # Skip date directories
-        tags.append(parent_dir.replace('-', ' ').title())
-    
-    # Add file name keywords as tags
-    filename_keywords = re.findall(r'[A-Z][a-z]*|[a-z]+|[A-Z]+', file_path.stem)
-    tags.extend([kw.lower() for kw in filename_keywords if len(kw) > 2])
-    
-    return {
-        "title": title,
-        "content": content,
-        "tags": tags,
-        "file_path": str(file_path)
-    }
+    try:
+        logger.info(f"📖 开始解析 Markdown 文件: {file_path.absolute()}")
+        content = file_path.read_text(encoding='utf-8')
+        
+        # Extract title from first heading
+        title_match = re.search(r'^#\s+(.+)$', content, re.MULTILINE)
+        title = title_match.group(1).strip() if title_match else file_path.stem
+        
+        # Extract tags from file content or path
+        tags = []
+        
+        # Add category as tag based on directory structure
+        parent_dir = file_path.parent.name
+        if parent_dir and not parent_dir.startswith('20'):  # Skip date directories
+            category_tag = parent_dir.replace('-', ' ').title()
+            tags.append(category_tag)
+            logger.debug(f"   - 添加分类标签: {category_tag}")
+        
+        # Add file name keywords as tags
+        filename_keywords = re.findall(r'[A-Z][a-z]*|[a-z]+|[A-Z]+', file_path.stem)
+        file_tags = [kw.lower() for kw in filename_keywords if len(kw) > 2]
+        tags.extend(file_tags)
+        
+        if file_tags:
+            logger.debug(f"   - 添加文件名标签: {', '.join(file_tags)}")
+        
+        # 统计内容信息
+        content_length = len(content)
+        line_count = content.count('\n') + 1
+        
+        logger.info(f"✅ 文件解析成功: {title[:30]}...")
+        logger.info(f"   - 文件路径: {file_path.absolute()}")
+        logger.info(f"   - 文件大小: {content_length} 字符")
+        logger.info(f"   - 行数: {line_count}")
+        logger.info(f"   - 标签数: {len(tags)}")
+        logger.debug(f"   - 标题: {title}")
+        logger.debug(f"   - 内容前100字符: {content[:100].replace(chr(10), ' ')}...")
+        
+        return {
+            "title": title,
+            "content": content,
+            "tags": tags,
+            "file_path": str(file_path.absolute())
+        }
+    except Exception as e:
+        logger.error(f"❌ 文件解析失败: {file_path.absolute()}")
+        logger.error(f"   错误详情: {str(e)}")
+        return {}
 
 
 def get_knowledge_categories(base_path: Path) -> Dict[str, List[Dict]]:
     """Organize knowledge files by category based on directory structure."""
+    import logging
+    logger = logging.getLogger("nanobot.knowledge.rocketmq_init")
+    
     knowledge_dir = base_path / "knowledge"
-    print(f"[DEBUG] 基础路径: {base_path}")
-    print(f"[DEBUG] 知识目录: {knowledge_dir}")
-    print(f"[DEBUG] 知识目录存在: {knowledge_dir.exists()}")
+    logger.info(f"📂 扫描知识文件目录...")
+    logger.info(f"   - 基础路径: {base_path}")
+    logger.info(f"   - 知识目录: {knowledge_dir}")
+    logger.info(f"   - 目录存在: {knowledge_dir.exists()}")
     
     if not knowledge_dir.exists():
-        print("[DEBUG] 知识目录不存在，返回空字典")
+        logger.warning("⚠️  知识目录不存在，返回空字典")
         return {}
     
     categories = {}
+    total_files = 0
     
-    # Find all date-based directories (e.g., 2026-02-12-01)
-    date_dirs = [d for d in knowledge_dir.iterdir() if d.is_dir() and re.match(r'\d{4}-\d{2}-\d{2}-\d{2}', d.name)]
-    print(f"找到日期目录: {[d.name for d in date_dirs]}")
+    # 递归扫描所有子目录中的 Markdown 文件
+    logger.info(f"🔍 开始递归扫描知识目录及其所有子目录...")
     
-    for date_dir in date_dirs:
-        print(f"处理日期目录: {date_dir.name}")
-        # Find all category directories
-        category_dirs = [d for d in date_dir.iterdir() if d.is_dir() and not d.name.startswith('_')]
-        print(f"找到分类目录: {[d.name for d in category_dirs]}")
+    # 使用 glob 递归查找所有 Markdown 文件
+    md_files = list(knowledge_dir.glob("**/*.md")) + list(knowledge_dir.glob("**/*.MD"))
+    logger.info(f"📄 找到 {len(md_files)} 个 Markdown 文件")
+    
+    # 按目录结构分类文件
+    file_groups = {}
+    for md_file in md_files:
+        # 获取相对于知识目录的相对路径
+        relative_path = md_file.relative_to(knowledge_dir)
         
-        for category_dir in category_dirs:
-            category_name = category_dir.name
+        # 提取分类信息：使用父目录名作为分类，如果有多层目录则使用最后两级
+        parts = list(relative_path.parent.parts)
+        
+        if len(parts) >= 2:
+            # 如果有日期目录和分类目录，使用分类目录名
+            category_name = parts[-1]  # 最后一级目录名
+        elif len(parts) == 1:
+            # 如果只有一级目录，使用该目录名
+            category_name = parts[0]
+        else:
+            # 如果在根目录，使用 "general"
+            category_name = "general"
+        
+        # 跳过以 _ 开头的目录（元数据目录）
+        if category_name.startswith('_'):
+            logger.debug(f"   - 跳过元数据目录: {category_name}")
+            continue
             
-            # Read category metadata if available
-            category_json = category_dir / "_category_.json"
-            if category_json.exists():
-                try:
-                    with open(category_json, 'r', encoding='utf-8') as f:
-                        metadata = json.load(f)
-                        category_name = metadata.get("label", category_name)
-                except:
-                    pass
-            
-            # Parse all markdown files in this category
-            md_files = list(category_dir.glob("*.md")) + list(category_dir.glob("*.MD"))
-            
-            for md_file in md_files:
-                knowledge_item = parse_markdown_file(md_file)
-                if knowledge_item:
-                    if category_name not in categories:
-                        categories[category_name] = []
-                    categories[category_name].append(knowledge_item)
+        if category_name not in file_groups:
+            file_groups[category_name] = []
+        file_groups[category_name].append(md_file)
+    
+    logger.info(f"📂 按目录结构分类: {len(file_groups)} 个分类")
+    logger.info(f"   - 分类列表: {list(file_groups.keys())}")
+    
+    # 处理每个分类的文件
+    for category_name, files in file_groups.items():
+        logger.info(f"📂 开始处理分类: {category_name}")
+        logger.info(f"   - 文件数: {len(files)}")
+        logger.info(f"   - 文件列表: {[f.name for f in files]}")
+        
+        category_file_count = 0
+        
+        for md_file in files:
+            logger.info(f"📄 开始处理知识文件: {md_file.absolute()}")
+            knowledge_item = parse_markdown_file(md_file)
+            if knowledge_item:
+                if category_name not in categories:
+                    categories[category_name] = []
+                categories[category_name].append(knowledge_item)
+                total_files += 1
+                category_file_count += 1
+                logger.info(f"✅ 文件解析成功: {md_file.name} -> {knowledge_item['title'][:30]}...")
+                logger.info(f"   - 文件路径: {md_file.absolute()}")
+                logger.info(f"   - 标题: {knowledge_item['title']}")
+                logger.info(f"   - 标签数: {len(knowledge_item.get('tags', []))}")
+            else:
+                logger.warning(f"⚠️  文件解析失败: {md_file.absolute()}")
+        
+        logger.info(f"✅ 分类 '{category_name}' 处理完成: {category_file_count}/{len(files)} 个文件成功")
+    
+    logger.info(f"✅ 知识文件扫描完成:")
+    logger.info(f"   - 找到分类数: {len(categories)}")
+    logger.info(f"   - 总文件数: {total_files}")
+    logger.info(f"   - 各分类文件数: {', '.join([f'{cat}:{len(items)}' for cat, items in categories.items()])}")
+    
+    # 如果没有找到任何文件，记录警告
+    if total_files == 0:
+        logger.warning("⚠️  未找到任何有效的知识文件")
+        logger.warning(f"   - 扫描路径: {knowledge_dir.absolute()}")
+        logger.warning(f"   - 支持的文件类型: *.md, *.MD")
     
     return categories
 
@@ -126,7 +202,7 @@ class RocketMQKnowledgeInitializer:
         # 检测是否为 ChromaKnowledgeStore（支持向量化）
         self.is_chroma_store = hasattr(knowledge_store, 'embedder') and hasattr(knowledge_store, 'chunker')
         
-        # 如果是旧的 KnowledgeStore，使用 DomainKnowledgeManager
+        # 如果不是 ChromaKnowledgeStore，使用 DomainKnowledgeManager
         if not self.is_chroma_store:
             self.manager = DomainKnowledgeManager(knowledge_store, self.domain)
         
@@ -141,20 +217,46 @@ class RocketMQKnowledgeInitializer:
         
         Returns:
             如果是 ChromaKnowledgeStore: (item_count, chunk_count)
-            如果是旧的 KnowledgeStore: item_count
+            如果是其他存储类型: item_count
         """
+        import logging
+        logger = logging.getLogger("nanobot.knowledge.rocketmq_init")
+        
+        logger.info(f"🚀 开始初始化 RocketMQ 知识库")
+        logger.info(f"   - 存储类型: ChromaKnowledgeStore (向量化)")
+        logger.info(f"   - 基础路径: {self.base_path}")
+        
         self.initialized_count = 0
         self.chunk_count = 0
         
         # Load knowledge from file system
+        logger.info("📂 正在加载知识文件...")
         categories = get_knowledge_categories(self.base_path)
         
         if not categories:
+            logger.warning("⚠️  未找到知识文件，使用内置知识作为备选")
             # Fallback to embedded knowledge if no files found
             self._initialize_embedded_knowledge()
         else:
+            logger.info(f"✅ 找到 {len(categories)} 个知识类别，共 {sum(len(items) for items in categories.values())} 个知识条目")
             # Initialize from file system
             self._initialize_from_filesystem(categories)
+        
+        logger.info(f"🎉 RocketMQ 知识库初始化完成:")
+        logger.info(f"📊 初始化结果统计:")
+        logger.info(f"   - 存储类型: ChromaKnowledgeStore (向量化)")
+        logger.info(f"   - 初始化知识条目数: {self.initialized_count}")
+        if self.is_chroma_store:
+            logger.info(f"   - 向量化文本块数: {self.chunk_count}")
+            logger.info(f"   - 平均每个条目分块数: {self.chunk_count / self.initialized_count if self.initialized_count > 0 else 0:.1f}")
+        logger.info(f"   - 基础路径: {self.base_path}")
+        logger.info(f"   - 知识域: {self.domain}")
+        logger.info(f"   - 初始化时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+        
+        if self.initialized_count == 0:
+            logger.warning("⚠️  警告: 未成功初始化任何知识条目")
+        else:
+            logger.info("✅ 知识库初始化成功，可以开始使用知识搜索功能")
         
         if self.is_chroma_store:
             return self.initialized_count, self.chunk_count
@@ -167,48 +269,70 @@ class RocketMQKnowledgeInitializer:
     
     def _initialize_from_filesystem(self, categories: Dict[str, List[Dict]]) -> None:
         """Initialize knowledge from file system categories."""
+        import logging
+        logger = logging.getLogger("nanobot.knowledge.rocketmq_init")
+        
+        logger.info("📝 开始处理知识文件...")
+        
         for category_name, knowledge_items in categories.items():
-            for item in knowledge_items:
+            logger.info(f"📁 处理类别 '{category_name}': {len(knowledge_items)} 个条目")
+            
+            for i, item in enumerate(knowledge_items, 1):
                 # Determine knowledge type based on category and content
                 knowledge_type = self._determine_knowledge_type(category_name, item["content"])
                 
-                if self.is_chroma_store:
-                    # 使用向量化存储
-                    self._add_knowledge_with_vectorization(
-                        knowledge_type=knowledge_type,
-                        title=item["title"],
-                        content=item["content"],
-                        tags=item["tags"]
-                    )
-                else:
-                    # 使用旧的存储方式
-                    if knowledge_type == "troubleshooting":
-                        self.manager.add_troubleshooting_guide(
-                            title=item["title"],
-                            content=item["content"],
-                            tags=item["tags"]
-                        )
-                    elif knowledge_type == "configuration":
-                        self.manager.add_configuration_guide(
-                            title=item["title"],
-                            content=item["content"],
-                            tags=item["tags"]
-                        )
-                    elif knowledge_type == "best_practice":
-                        self.manager.add_best_practice(
+                logger.info(f"🔧 正在初始化知识条目 {i}/{len(knowledge_items)}: {item['title'][:50]}...")
+                logger.debug(f"   - 知识类型: {knowledge_type}")
+                logger.debug(f"   - 文件来源: {item.get('file_path', '未知')}")
+                
+                try:
+                    if self.is_chroma_store:
+                        # 使用向量化存储
+                        self._add_knowledge_with_vectorization(
+                            knowledge_type=knowledge_type,
                             title=item["title"],
                             content=item["content"],
                             tags=item["tags"]
                         )
                     else:
-                        # Default to troubleshooting guide
-                        self.manager.add_troubleshooting_guide(
-                            title=item["title"],
-                            content=item["content"],
-                            tags=item["tags"]
-                        )
-                
-                self._increment_count()
+                        # 使用旧的存储方式
+                        if knowledge_type == "troubleshooting":
+                            self.manager.add_troubleshooting_guide(
+                                title=item["title"],
+                                content=item["content"],
+                                tags=item["tags"]
+                            )
+                        elif knowledge_type == "configuration":
+                            self.manager.add_configuration_guide(
+                                title=item["title"],
+                                content=item["content"],
+                                tags=item["tags"]
+                            )
+                        elif knowledge_type == "best_practice":
+                            self.manager.add_best_practice(
+                                title=item["title"],
+                                content=item["content"],
+                                tags=item["tags"]
+                            )
+                        else:
+                            # Default to troubleshooting guide
+                            self.manager.add_troubleshooting_guide(
+                                title=item["title"],
+                                content=item["content"],
+                                tags=item["tags"]
+                            )
+                    
+                    self._increment_count()
+                    logger.info(f"✅ 知识条目初始化成功: {item['title'][:30]}...")
+                    
+                except Exception as e:
+                    logger.error(f"❌ 知识条目初始化失败: {item['title'][:30]}...")
+                    logger.error(f"   错误详情: {str(e)}")
+                    logger.error(f"   文件路径: {item.get('file_path', '未知')}")
+            
+            logger.info(f"✅ 类别 '{category_name}' 处理完成: {len(knowledge_items)} 个条目")
+        
+        logger.info(f"✅ 所有知识文件处理完成，共 {self.initialized_count} 个条目")
     
     def _add_knowledge_with_vectorization(
         self, 
@@ -256,22 +380,35 @@ class RocketMQKnowledgeInitializer:
         }
         
         try:
+            logger.info(f"🧩 开始向量化处理知识条目: {title[:50]}...")
+            logger.debug(f"   - 条目ID: {item_id}")
+            logger.debug(f"   - 知识类型: {knowledge_type}")
+            logger.debug(f"   - 内容长度: {len(content)} 字符")
+            
             # 1. 文本分块
+            logger.info(f"📄 正在对文本进行分块处理...")
             chunks = self.store.chunker.chunk_text(content, metadata)
             
             if not chunks:
-                logger.warning(f"知识条目 {item_id} 分块后为空，跳过")
+                logger.warning(f"⚠️ 知识条目 {item_id} 分块后为空，跳过")
                 return
             
+            logger.info(f"✅ 文本分块完成: {len(chunks)} 个分块")
+            logger.debug(f"   - 平均分块大小: {sum(len(chunk['text']) for chunk in chunks) / len(chunks):.0f} 字符")
+            
             # 2. 批量向量化
+            logger.info(f"🔢 正在对 {len(chunks)} 个分块进行向量化...")
             chunk_texts = [chunk["text"] for chunk in chunks]
             try:
                 embeddings = self.store.embedder.embed_batch(chunk_texts)
+                logger.info(f"✅ 向量化完成: {len(embeddings)} 个向量，维度: {len(embeddings[0]) if embeddings else 0}")
+                logger.debug(f"   - 向量化成功率: {len(embeddings)}/{len(chunks)}")
             except Exception as e:
-                logger.error(f"知识条目 {item_id} 向量化失败: {str(e)}")
+                logger.error(f"❌ 知识条目 {item_id} 向量化失败: {str(e)}")
                 return
             
             # 3. 存储到 Chroma
+            logger.info(f"💾 正在存储到 Chroma 数据库...")
             collection = self.store._get_or_create_collection(self.domain)
             
             # 准备批量插入的数据
@@ -298,15 +435,16 @@ class RocketMQKnowledgeInitializer:
             # 更新分块计数
             self.chunk_count += len(chunks)
             
-            logger.debug(
-                f"知识条目 {item_id} 已添加: {len(chunks)} 个分块"
-            )
+            logger.info(f"✅ 知识条目 '{title[:30]}...' 已成功存储: {len(chunks)} 个分块")
+            logger.info(f"📊 存储统计: 条目 {self.initialized_count + 1}, 分块 {self.chunk_count}")
+            logger.debug(f"   - 存储集合: {self.domain}")
+            logger.debug(f"   - 存储时间: {datetime.now().strftime('%H:%M:%S')}")
             
         except Exception as e:
-            logger.error(
-                f"添加知识条目 {item_id} 失败: {str(e)}",
-                exc_info=True
-            )
+            logger.error(f"❌ 知识条目 {item_id} 存储失败: {str(e)}")
+            logger.error(f"   错误详情: {str(e)}")
+            logger.error(f"   条目标题: {title}")
+            logger.error(f"   知识类型: {knowledge_type}")
     
     def _determine_knowledge_type(self, category_name: str, content: str) -> str:
         """Determine the type of knowledge based on category and content."""
@@ -355,8 +493,8 @@ class RocketMQKnowledgeInitializer:
     # 知识文件应按照目录结构组织，系统会自动分类和加载
 
 
-def initialize_rocketmq_knowledge(workspace: Path) -> int:
+def initialize_rocketmq_knowledge(workspace: Path) -> int | tuple[int, int]:
     """Initialize built-in RocketMQ knowledge."""
-    store = LegacyKnowledgeStore(workspace)
+    store = ChromaKnowledgeStore(workspace)
     initializer = RocketMQKnowledgeInitializer(store)
     return initializer.initialize()

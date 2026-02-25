@@ -60,260 +60,7 @@ class KnowledgeItem:
         return cls(**data)
 
 
-class LegacyKnowledgeStore:
-    """Knowledge base storage system."""
-    
-    def __init__(self, workspace: Path):
-        self.workspace = workspace
-        self.knowledge_dir = ensure_dir(workspace / "knowledge")
-        self.index_file = self.knowledge_dir / "index.json"
-        self.init_status_file = self.knowledge_dir / "init_status.json"
-        self._index: Dict[str, KnowledgeItem] = {}
-        self._init_status: Dict[str, Any] = {}
-        self._load_index()
-        self._load_init_status()
-        
-        # Auto-initialize built-in knowledge with smart detection
-        self._auto_initialize_builtin_knowledge()
-    
-    def _load_index(self) -> None:
-        """Load knowledge index from file."""
-        if self.index_file.exists():
-            try:
-                with open(self.index_file, 'r', encoding='utf-8') as f:
-                    data = json.load(f)
-                    self._index = {k: KnowledgeItem.from_dict(v) for k, v in data.items()}
-            except (json.JSONDecodeError, KeyError):
-                self._index = {}
-    
-    def _load_init_status(self) -> None:
-        """Load initialization status from file."""
-        if self.init_status_file.exists():
-            try:
-                with open(self.init_status_file, 'r', encoding='utf-8') as f:
-                    self._init_status = json.load(f)
-            except (json.JSONDecodeError, KeyError):
-                self._init_status = {}
-        else:
-            self._init_status = {}
-    
-    def _save_init_status(self) -> None:
-        """Save initialization status to file."""
-        with open(self.init_status_file, 'w', encoding='utf-8') as f:
-            json.dump(self._init_status, f, indent=2, ensure_ascii=False)
-    
-    def _save_index(self) -> None:
-        """Save knowledge index to file."""
-        data = {k: v.to_dict() for k, v in self._index.items()}
-        with open(self.index_file, 'w', encoding='utf-8') as f:
-            json.dump(data, f, indent=2, ensure_ascii=False)
-    
-    def add_knowledge(self, domain: str, category: str, title: str, content: str, 
-                     tags: List[str] = None, source: str = "user", priority: int = 1) -> str:
-        """Add a new knowledge item."""
-        if tags is None:
-            tags = []
-        
-        # Generate unique ID
-        timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
-        item_id = f"{domain}_{timestamp}"
-        
-        # Create knowledge item
-        knowledge_item = KnowledgeItem(
-            id=item_id,
-            domain=domain,
-            category=category,
-            title=title,
-            content=content,
-            tags=tags,
-            created_at=datetime.now().isoformat(),
-            updated_at=datetime.now().isoformat(),
-            source=source,
-            priority=priority
-        )
-        
-        # Save to index
-        self._index[item_id] = knowledge_item
-        self._save_index()
-        
-        return item_id
-    
-    def get_knowledge(self, item_id: str) -> Optional[KnowledgeItem]:
-        """Get a knowledge item by ID."""
-        return self._index.get(item_id)
-    
-    def update_knowledge(self, item_id: str, **kwargs) -> bool:
-        """Update a knowledge item."""
-        if item_id not in self._index:
-            return False
-        
-        item = self._index[item_id]
-        
-        # Update allowed fields
-        allowed_fields = ['title', 'content', 'tags', 'category', 'priority']
-        for key, value in kwargs.items():
-            if key in allowed_fields and hasattr(item, key):
-                setattr(item, key, value)
-        
-        item.updated_at = datetime.now().isoformat()
-        self._save_index()
-        
-        return True
-    
-    def delete_knowledge(self, item_id: str) -> bool:
-        """Delete a knowledge item."""
-        if item_id not in self._index:
-            return False
-        
-        del self._index[item_id]
-        self._save_index()
-        return True
-    
-    def search_knowledge(self, query: str = None, domain: str = None, 
-                        category: str = None, tags: List[str] = None) -> List[KnowledgeItem]:
-        """Search knowledge items."""
-        results = list(self._index.values())
-        
-        # Filter by domain
-        if domain:
-            results = [item for item in results if item.domain == domain]
-        
-        # Filter by category
-        if category:
-            results = [item for item in results if item.category == category]
-        
-        # Filter by tags
-        if tags:
-            results = [item for item in results if any(tag in item.tags for tag in tags)]
-        
-        # Filter by query (simple text search)
-        if query:
-            query_lower = query.lower()
-            results = [item for item in results 
-                      if query_lower in item.title.lower() or query_lower in item.content.lower()]
-        
-        # Sort by priority and recency
-        results.sort(key=lambda x: (-x.priority, x.created_at), reverse=True)
-        
-        return results
-    
-    def get_domains(self) -> List[str]:
-        """Get list of all domains."""
-        domains = set(item.domain for item in self._index.values())
-        return sorted(domains)
-    
-    def get_categories(self, domain: str = None) -> List[str]:
-        """Get list of categories for a domain."""
-        items = self._index.values()
-        if domain:
-            items = [item for item in items if item.domain == domain]
-        
-        categories = set(item.category for item in items)
-        return sorted(categories)
-    
-    def get_tags(self, domain: str = None) -> List[str]:
-        """Get list of all tags."""
-        items = self._index.values()
-        if domain:
-            items = [item for item in items if item.domain == domain]
-        
-        tags = set()
-        for item in items:
-            tags.update(item.tags)
-        
-        return sorted(tags)
-    
-    def export_knowledge(self, domain: str = None) -> Dict[str, Any]:
-        """Export knowledge as JSON."""
-        items = self._index.values()
-        if domain:
-            items = [item for item in items if item.domain == domain]
-        
-        return {
-            "exported_at": datetime.now().isoformat(),
-            "knowledge_items": [item.to_dict() for item in items]
-        }
-    
-    def import_knowledge(self, data: Dict[str, Any]) -> int:
-        """Import knowledge from JSON."""
-        if "knowledge_items" not in data:
-            return 0
-        
-        imported_count = 0
-        for item_data in data["knowledge_items"]:
-            try:
-                item = KnowledgeItem.from_dict(item_data)
-                self._index[item.id] = item
-                imported_count += 1
-            except (KeyError, TypeError):
-                continue
-        
-        if imported_count > 0:
-            self._save_index()
-        
-        return imported_count
-    
-    def _auto_initialize_builtin_knowledge(self) -> None:
-        """Auto-initialize built-in knowledge with smart detection."""
-        # Check if RocketMQ knowledge needs initialization
-        self._initialize_rocketmq_knowledge()
-    
-    def _initialize_rocketmq_knowledge(self) -> None:
-        """Initialize RocketMQ knowledge with version control and content validation."""
-        try:
-            from .rocketmq_init import RocketMQKnowledgeInitializer, ROCKETMQ_KNOWLEDGE_VERSION
-            
-            # Check if RocketMQ knowledge is already initialized
-            rocketmq_status = self._init_status.get("rocketmq", {})
-            current_version = rocketmq_status.get("version")
-            
-            # Check if we need to reinitialize (version mismatch or content changed)
-            needs_reinit = self._should_reinitialize_rocketmq(current_version, ROCKETMQ_KNOWLEDGE_VERSION)
-            
-            if needs_reinit:
-                # Initialize RocketMQ knowledge
-                initializer = RocketMQKnowledgeInitializer(self)
-                count = initializer.initialize()
-                
-                # Update initialization status
-                self._init_status["rocketmq"] = {
-                    "version": ROCKETMQ_KNOWLEDGE_VERSION,
-                    "initialized_at": datetime.now().isoformat(),
-                    "item_count": count,
-                    "last_check": datetime.now().isoformat()
-                }
-                self._save_init_status()
-                
-                print(f"✓ Initialized {count} RocketMQ knowledge items (v{ROCKETMQ_KNOWLEDGE_VERSION})")
-            else:
-                # Already up to date
-                self._init_status["rocketmq"]["last_check"] = datetime.now().isoformat()
-                self._save_init_status()
-                
-        except ImportError:
-            # RocketMQ knowledge module not available
-            pass
-        except Exception as e:
-            print(f"⚠ Failed to initialize RocketMQ knowledge: {e}")
-    
-    def _should_reinitialize_rocketmq(self, current_version: str, new_version: str) -> bool:
-        """Determine if RocketMQ knowledge should be reinitialized."""
-        # If never initialized, need to initialize
-        if not current_version:
-            return True
-        
-        # If version changed, need to reinitialize
-        if current_version != new_version:
-            return True
-        
-        # Check if any RocketMQ knowledge items exist
-        rocketmq_items = self.search_knowledge(domain="rocketmq")
-        if not rocketmq_items:
-            return True
-        
-        # For now, we'll assume content is stable unless version changes
-        # In production, you'd implement file change detection here
-        return False
+
 
 
 class ChromaKnowledgeStore:
@@ -330,14 +77,26 @@ class ChromaKnowledgeStore:
             ChromaConnectionError: Chroma 数据库连接失败时抛出
             EmbeddingModelError: Embedding 模型加载失败时抛出
         """
+        import time
+        start_time = time.time()
+        
         self.workspace = workspace
         self.config = config or RAGConfig()
         self.knowledge_dir = ensure_dir(workspace / "knowledge")
         self.chroma_dir = ensure_dir(self.knowledge_dir / "chroma_db")
         self.init_status_file = self.knowledge_dir / "init_status.json"
         
+        logger.info("🏗️  开始初始化 RAG 知识库系统")
+        logger.info(f"   - 工作空间: {workspace}")
+        logger.info(f"   - 知识库目录: {self.knowledge_dir}")
+        logger.info(f"   - Chroma 数据库: {self.chroma_dir}")
+        
         # 初始化组件
-        logger.info("初始化 RAG 知识库组件")
+        logger.info("🔧 初始化 RAG 知识库组件...")
+        logger.info(f"   - 向量化模型: {self.config.embedding_model}")
+        logger.info(f"   - 分块大小: {self.config.chunk_size}")
+        logger.info(f"   - 分块重叠: {self.config.chunk_overlap}")
+        
         self.embedder = VectorEmbedder(self.config.embedding_model)
         self.chunker = TextChunker(
             chunk_size=self.config.chunk_size,
@@ -349,7 +108,11 @@ class ChromaKnowledgeStore:
         self._load_init_status()
         
         # 自动初始化内置知识
+        logger.info("📚 开始自动初始化内置知识...")
         self._auto_initialize_builtin_knowledge()
+        
+        elapsed = time.time() - start_time
+        logger.info(f"✅ RAG 知识库系统初始化完成，总耗时: {elapsed:.2f} 秒")
     
     def _init_chroma(self) -> None:
         """初始化 Chroma 客户端.
@@ -387,24 +150,34 @@ class ChromaKnowledgeStore:
         
         try:
             # 尝试获取现有集合
+            logger.debug(f"🔍 尝试获取现有集合: {collection_name}")
             collection = self.chroma_client.get_collection(name=collection_name)
-            logger.debug(f"获取现有集合: {collection_name}")
+            
+            # 获取集合统计信息
+            collection_count = collection.count()
+            logger.info(f"✅ 获取现有集合成功: {collection_name}")
+            logger.info(f"   - 文档数量: {collection_count}")
+            logger.info(f"   - 创建时间: {collection.metadata.get('created_at', '未知')}")
+            
             return collection
         except Exception:
             # 集合不存在，创建新集合
             try:
-                logger.info(f"创建新集合: {collection_name}")
+                logger.info(f"🏗️  创建新集合: {collection_name}")
                 collection = self.chroma_client.create_collection(
                     name=collection_name,
                     metadata={
                         "domain": domain,
-                        "created_at": datetime.now().isoformat()
+                        "created_at": datetime.now().isoformat(),
+                        "description": f"{domain} 知识库集合"
                     }
                 )
-                logger.info(f"集合创建成功: {collection_name}")
+                logger.info(f"✅ 集合创建成功: {collection_name}")
+                logger.info(f"   - 领域: {domain}")
+                logger.info(f"   - 创建时间: {collection.metadata.get('created_at', '未知')}")
                 return collection
             except Exception as e:
-                logger.error(f"集合创建失败: {collection_name}, 错误: {str(e)}", exc_info=True)
+                logger.error(f"❌ 集合创建失败: {collection_name}, 错误: {str(e)}", exc_info=True)
                 raise ChromaConnectionError(f"创建集合失败: {str(e)}")
     
     def _load_init_status(self) -> None:
@@ -442,63 +215,100 @@ class ChromaKnowledgeStore:
         """
         status = self._init_status.get(domain, {})
         current_version = status.get("version")
+        item_count = status.get("item_count", 0)
+        chunk_count = status.get("chunk_count", 0)
+        
+        logger.info(f"🔍 检查领域 '{domain}' 的初始化状态:")
+        logger.info(f"   - 当前版本: {current_version or '未初始化'}")
+        logger.info(f"   - 新版本: {new_version}")
+        logger.info(f"   - 现有条目数: {item_count}")
+        logger.info(f"   - 现有分块数: {chunk_count}")
         
         # 如果从未初始化，需要初始化
         if not current_version:
-            logger.info(f"领域 {domain} 从未初始化，需要初始化")
+            logger.info(f"✅ 决策: 领域 '{domain}' 从未初始化，需要初始化")
             return True
         
         # 如果版本号发生变化，需要重新初始化
         if current_version != new_version:
             logger.info(
-                f"领域 {domain} 版本变化: {current_version} -> {new_version}，需要重新初始化"
+                f"✅ 决策: 领域 '{domain}' 版本变化 ({current_version} -> {new_version})，需要重新初始化"
             )
             return True
         
         # 检查集合是否存在且包含数据
         try:
             collection = self.chroma_client.get_collection(f"knowledge_{domain}")
-            if collection.count() == 0:
-                logger.info(f"领域 {domain} 集合为空，需要重新初始化")
+            collection_count = collection.count()
+            
+            if collection_count == 0:
+                logger.info(f"✅ 决策: 领域 '{domain}' 集合为空，需要重新初始化")
                 return True
+            else:
+                logger.info(f"ℹ️  领域 '{domain}' 集合存在，包含 {collection_count} 个文档")
         except Exception as e:
-            logger.warning(f"领域 {domain} 集合不存在或无法访问: {str(e)}，需要重新初始化")
+            logger.warning(f"✅ 决策: 领域 '{domain}' 集合不存在或无法访问: {str(e)}，需要重新初始化")
             return True
         
-        logger.info(f"领域 {domain} 已初始化且版本未变化，跳过初始化")
+        logger.info(f"✅ 决策: 领域 '{domain}' 已初始化且版本未变化，跳过初始化")
         return False
     
     def _auto_initialize_builtin_knowledge(self) -> None:
         """自动初始化内置知识."""
-        logger.info("开始自动初始化内置知识")
+        import time
+        start_time = time.time()
+        
+        logger.info("🚀 开始自动初始化内置知识库")
+        logger.info("📊 检查内置知识模块可用性...")
         
         # 初始化 RocketMQ 知识
         self._initialize_rocketmq_knowledge()
         
-        logger.info("内置知识初始化完成")
+        elapsed = time.time() - start_time
+        
+        # 统计初始化结果
+        rocketmq_status = self._init_status.get("rocketmq", {})
+        rocketmq_items = rocketmq_status.get("item_count", 0)
+        rocketmq_chunks = rocketmq_status.get("chunk_count", 0)
+        
+        logger.info("✅ 内置知识库初始化完成:")
+        logger.info(f"   - RocketMQ 知识条目: {rocketmq_items}")
+        logger.info(f"   - RocketMQ 向量化分块: {rocketmq_chunks}")
+        logger.info(f"   - 总耗时: {elapsed:.2f} 秒")
+        
+        if rocketmq_items == 0:
+            logger.warning("⚠️  RocketMQ 知识库为空，可能需要检查知识文件路径")
+        else:
+            logger.info("🎉 内置知识库已准备就绪，可以开始使用")
     
     def _initialize_rocketmq_knowledge(self) -> None:
         """初始化 RocketMQ 知识，支持版本控制和向量化."""
         try:
             from .rocketmq_init import RocketMQKnowledgeInitializer, ROCKETMQ_KNOWLEDGE_VERSION
             
+            logger.info(f"🔍 检查 RocketMQ 知识库状态...")
+            logger.info(f"   - 当前版本: {ROCKETMQ_KNOWLEDGE_VERSION}")
+            
             # 检查是否需要重新初始化
             needs_reinit = self._should_reinitialize("rocketmq", ROCKETMQ_KNOWLEDGE_VERSION)
             
             if needs_reinit:
+                logger.info(f"🔄 需要重新初始化 RocketMQ 知识库")
+                
                 import time
                 start_time = time.time()
                 
-                logger.info(f"开始初始化 RocketMQ 知识库 (v{ROCKETMQ_KNOWLEDGE_VERSION})")
+                logger.info(f"🚀 开始初始化 RocketMQ 知识库 (v{ROCKETMQ_KNOWLEDGE_VERSION})")
                 
                 # 如果需要重新初始化，先清空现有集合
                 try:
                     self.chroma_client.delete_collection(f"knowledge_rocketmq")
-                    logger.info("已删除旧的 RocketMQ 集合")
+                    logger.info("🗑️  已删除旧的 RocketMQ 集合")
                 except Exception:
-                    pass  # 集合不存在，忽略
+                    logger.info("ℹ️  RocketMQ 集合不存在，无需删除")
                 
                 # 初始化 RocketMQ 知识
+                logger.info("📚 正在加载 RocketMQ 知识内容...")
                 initializer = RocketMQKnowledgeInitializer(self)
                 item_count, chunk_count = initializer.initialize()
                 
@@ -515,13 +325,14 @@ class ChromaKnowledgeStore:
                 }
                 self._save_init_status()
                 
-                logger.info(
-                    f"✓ 初始化 {item_count} 个 RocketMQ 知识条目，"
-                    f"{chunk_count} 个文本块 (v{ROCKETMQ_KNOWLEDGE_VERSION})，"
-                    f"耗时 {elapsed:.2f} 秒"
-                )
+                logger.info("✅ RocketMQ 知识库初始化完成:")
+                logger.info(f"   - 知识条目数: {item_count}")
+                logger.info(f"   - 向量化分块数: {chunk_count}")
+                logger.info(f"   - 版本: v{ROCKETMQ_KNOWLEDGE_VERSION}")
+                logger.info(f"   - 耗时: {elapsed:.2f} 秒")
+                
                 print(
-                    f"✓ 初始化 {item_count} 个 RocketMQ 知识条目，"
+                    f"✅ 初始化 {item_count} 个 RocketMQ 知识条目，"
                     f"{chunk_count} 个文本块 (v{ROCKETMQ_KNOWLEDGE_VERSION})，"
                     f"耗时 {elapsed:.2f} 秒"
                 )
@@ -529,13 +340,20 @@ class ChromaKnowledgeStore:
                 # 已经是最新版本，只更新检查时间
                 self._init_status["rocketmq"]["last_check"] = datetime.now().isoformat()
                 self._save_init_status()
-                logger.info(f"RocketMQ 知识库已是最新版本 (v{ROCKETMQ_KNOWLEDGE_VERSION})")
+                
+                status = self._init_status.get("rocketmq", {})
+                item_count = status.get("item_count", 0)
+                chunk_count = status.get("chunk_count", 0)
+                
+                logger.info(f"✅ RocketMQ 知识库已是最新版本 (v{ROCKETMQ_KNOWLEDGE_VERSION})")
+                logger.info(f"   - 现有知识条目数: {item_count}")
+                logger.info(f"   - 现有向量化分块数: {chunk_count}")
                 
         except ImportError:
-            logger.warning("RocketMQ 知识模块不可用")
+            logger.warning("⚠️  RocketMQ 知识模块不可用，跳过初始化")
         except Exception as e:
-            logger.error(f"初始化 RocketMQ 知识失败: {str(e)}", exc_info=True)
-            print(f"⚠ 初始化 RocketMQ 知识失败: {e}")
+            logger.error(f"❌ 初始化 RocketMQ 知识失败: {str(e)}", exc_info=True)
+            print(f"⚠️ 初始化 RocketMQ 知识失败: {e}")
     
     def add_knowledge(
         self, 
@@ -1416,7 +1234,7 @@ class ChromaKnowledgeStore:
 class DomainKnowledgeManager:
     """Specialized knowledge manager for specific domains."""
     
-    def __init__(self, knowledge_store: Union[LegacyKnowledgeStore, "ChromaKnowledgeStore"], domain: str):
+    def __init__(self, knowledge_store: "ChromaKnowledgeStore", domain: str):
         self.store = knowledge_store
         self.domain = domain
     
@@ -1540,5 +1358,4 @@ class DomainKnowledgeManager:
 
 
 # 默认使用 ChromaKnowledgeStore（支持 RAG 向量检索）
-# 旧的 JSON 存储已重命名为 LegacyKnowledgeStore
 KnowledgeStore = ChromaKnowledgeStore

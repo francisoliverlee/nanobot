@@ -344,6 +344,35 @@ def gateway(
     bus = MessageBus()
     provider = _make_provider(config)
     session_manager = SessionManager(config.workspace_path)
+    
+    # 在启动时预初始化知识库，确保启动时打印初始化日志
+    try:
+        from pathlib import Path
+        workspace = Path(config.agents.defaults.workspace)
+        
+        console.print("📚 正在初始化知识库系统...")
+        
+        # 预初始化知识库存储系统
+        from nanobot.knowledge.store import ChromaKnowledgeStore
+        store = ChromaKnowledgeStore(workspace)
+        
+        console.print("✅ 知识库系统初始化完成")
+        
+        # 初始化 RocketMQ 知识库，确保启动时打印初始化日志
+        console.print("🚀 正在初始化 RocketMQ 知识库...")
+        from nanobot.knowledge.rocketmq_init import initialize_rocketmq_knowledge
+        result = initialize_rocketmq_knowledge(workspace)
+        
+        if isinstance(result, tuple):
+            # ChromaKnowledgeStore 返回 (item_count, chunk_count)
+            item_count, chunk_count = result
+            console.print(f"✅ RocketMQ 知识库初始化完成: {item_count} 个条目, {chunk_count} 个分块")
+        else:
+            # 返回 item_count
+            console.print(f"✅ RocketMQ 知识库初始化完成: {result} 个条目")
+            
+    except Exception as e:
+        console.print(f"⚠️  知识库初始化警告: {str(e)}")
 
     # Create cron service first (callback set after agent creation)
     cron_store_path = get_data_dir() / "cron" / "jobs.json"
@@ -454,6 +483,35 @@ def agent(
         logger.enable("nanobot")
     else:
         logger.disable("nanobot")
+
+    # 在启动时预初始化知识库，确保启动时打印初始化日志
+    try:
+        from pathlib import Path
+        workspace = Path(config.agents.defaults.workspace)
+        
+        console.print("📚 正在初始化知识库系统...")
+        
+        # 预初始化知识库存储系统
+        from nanobot.knowledge.store import ChromaKnowledgeStore
+        store = ChromaKnowledgeStore(workspace)
+        
+        console.print("✅ 知识库系统初始化完成")
+        
+        # 初始化 RocketMQ 知识库，确保启动时打印初始化日志
+        console.print("🚀 正在初始化 RocketMQ 知识库...")
+        from nanobot.knowledge.rocketmq_init import initialize_rocketmq_knowledge
+        result = initialize_rocketmq_knowledge(workspace)
+        
+        if isinstance(result, tuple):
+            # ChromaKnowledgeStore 返回 (item_count, chunk_count)
+            item_count, chunk_count = result
+            console.print(f"✅ RocketMQ 知识库初始化完成: {item_count} 个条目, {chunk_count} 个分块")
+        else:
+            # 返回 item_count
+            console.print(f"✅ RocketMQ 知识库初始化完成: {result} 个条目")
+            
+    except Exception as e:
+        console.print(f"⚠️  知识库初始化警告: {str(e)}")
 
     agent_loop = AgentLoop(
         bus=bus,
@@ -845,10 +903,42 @@ def webui(
         port: int = typer.Option(8000, "--port", help="Port to bind"),
 ):
     """Start the nanobot Web UI."""
-    import uvicorn
     from nanobot.web.web import web_app
+    from nanobot.config.loader import load_config
+    from pathlib import Path
     
     console.print(f"{__logo__} Starting nanobot Web UI on http://{host}:{port}")
+    
+    # 在启动时预初始化知识库，确保启动时打印初始化日志
+    try:
+        config = load_config()
+        workspace = Path(config.agents.defaults.workspace)
+        
+        console.print("📚 正在初始化知识库系统...")
+        
+        # 预初始化知识库存储系统
+        from nanobot.knowledge.store import ChromaKnowledgeStore
+        store = ChromaKnowledgeStore(workspace)
+        
+        console.print("✅ 知识库系统初始化完成")
+        
+        # 初始化 RocketMQ 知识库，确保启动时打印初始化日志
+        console.print("🚀 正在初始化 RocketMQ 知识库...")
+        from nanobot.knowledge.rocketmq_init import initialize_rocketmq_knowledge
+        result = initialize_rocketmq_knowledge(workspace)
+        
+        if isinstance(result, tuple):
+            # ChromaKnowledgeStore 返回 (item_count, chunk_count)
+            item_count, chunk_count = result
+            console.print(f"✅ RocketMQ 知识库初始化完成: {item_count} 个条目, {chunk_count} 个分块")
+        else:
+            # 返回 item_count
+            console.print(f"✅ RocketMQ 知识库初始化完成: {result} 个条目")
+            
+    except Exception as e:
+        console.print(f"⚠️  知识库初始化警告: {str(e)}")
+    
+    import uvicorn
     uvicorn.run(web_app, host=host, port=port)
 
 
