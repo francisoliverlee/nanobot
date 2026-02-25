@@ -171,6 +171,8 @@ class LiteLLMProvider(LLMProvider):
                 
                 response = await acompletion(**kwargs)
                 
+                min_chunk_length = 10 # 超过10个字符才触发回调
+
                 async for chunk in response:
                     if hasattr(chunk, 'choices') and chunk.choices:
                         delta = chunk.choices[0].delta
@@ -191,6 +193,9 @@ class LiteLLMProvider(LLMProvider):
                                     "chunk_index": len(full_content) - len(content_chunk)
                                 }
                                 
+                                if len(content_chunk) < min_chunk_length:
+                                    logger.debug(f"[LLM] 流式调用回调: {json.dumps(context_info, ensure_ascii=False)}")
+                                    continue
                                 if asyncio.iscoroutinefunction(stream_callback):
                                     await stream_callback(context_info)
                                 else:
