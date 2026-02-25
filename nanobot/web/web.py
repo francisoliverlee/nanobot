@@ -5,6 +5,8 @@ from pathlib import Path
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse
 
+from nanobot.cli.commands import webui
+
 
 class ConnectionManager:
     """Manage WebSocket connections."""
@@ -259,3 +261,7 @@ async def process_user_message(user_input: str) -> str:
         return f"{response}\\n\\n---\\n*总耗时: {total_processing_time}秒 | LLM执行耗时: {llm_execution_time}秒*"
     else:
         return f"No response from agent.\\n\\n---\\n*总耗时: {total_processing_time}秒 | LLM执行耗时: {llm_execution_time}秒*"
+
+
+if __name__ == "__main__":
+    webui()

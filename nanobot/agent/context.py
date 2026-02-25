@@ -146,6 +146,7 @@ class ContextBuilder:
         media: list[str] | None = None,
         channel: str | None = None,
         chat_id: str | None = None,
+        additional_context: str | None = None,
     ) -> list[dict[str, Any]]:
         """
         Build the complete message list for an LLM call.
@@ -157,6 +158,7 @@ class ContextBuilder:
             media: Optional list of local file paths for images/media.
             channel: Current channel (telegram, feishu, etc.).
             chat_id: Current chat/user ID.
+            additional_context: Optional additional context (e.g., knowledge base results).
 
         Returns:
             List of messages including system prompt.
@@ -167,6 +169,11 @@ class ContextBuilder:
         system_prompt = self.build_system_prompt(skill_names)
         if channel and chat_id:
             system_prompt += f"\n\n## Current Session\nChannel: {channel}\nChat ID: {chat_id}"
+        
+        # 如果存在额外上下文（如知识库查询结果），添加到系统提示中
+        if additional_context:
+            system_prompt += f"\n\n## Additional Context\n{additional_context}"
+            
         messages.append({"role": "system", "content": system_prompt})
 
         # History

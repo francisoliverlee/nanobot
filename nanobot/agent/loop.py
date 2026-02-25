@@ -193,13 +193,17 @@ class AgentLoop:
         if isinstance(cron_tool, CronTool):
             cron_tool.set_context(msg.channel, msg.chat_id)
 
-        # Build initial messages (use get_history for LLM-formatted messages)
+        # 在构建消息前优先查询知识库
+        knowledge_context = await self._query_knowledge_base(msg.content)
+        
+        # 构建初始消息（如果存在知识库查询结果，将其作为额外上下文）
         messages = self.context.build_messages(
             history=session.get_history(),
             current_message=msg.content,
             media=msg.media if msg.media else None,
             channel=msg.channel,
             chat_id=msg.chat_id,
+            additional_context=knowledge_context  # 添加知识库查询结果作为额外上下文
         )
 
         # Agent loop
@@ -870,3 +874,121 @@ class AgentLoop:
             return "tool_call"
         
         return "normal"
+
+    async def _query_knowledge_base(self, user_input: str) -> str | None:
+        """
+        根据用户输入自动查询知识库，返回相关的知识内容作为上下文。
+        
+        Args:
+            user_input: 用户输入的内容
+            
+        Returns:
+            知识库查询结果，如果没有相关结果则返回None
+        """
+        from loguru import logger
+        
+        # 如果用户输入太短，不进行知识库查询
+        if len(user_input.strip()) < 5:
+            logger.info("[KNOWLEDGE] 📝 用户输入太短，跳过知识库查询")
+            return None
+        
+        # 自动推断知识库查询的domain和query
+        domain, query = self._infer_knowledge_query(user_input)
+        
+        if not domain or not query:
+            logger.info("[KNOWLEDGE] 📝 无法推断知识库查询参数，跳过查询")
+            return None
+        
+        logger.info(f"[KNOWLEDGE] 🔍 开始知识库查询:")
+        logger.info(f"[KNOWLEDGE]   - Domain: {domain}")
+        logger.info(f"[KNOWLEDGE]   - Query: {query}")
+        
+        try:
+            # 使用KnowledgeSearchTool执行查询
+            knowledge_tool = self.tools.get("knowledge_search")
+            if not knowledge_tool:
+                logger.warning("[KNOWLEDGE] ⚠️ KnowledgeSearchTool未注册，跳过查询")
+                return None
+            
+            # 执行知识库查询
+            result = await knowledge_tool.execute(
+                domain=domain,
+                query=query,
+                limit=5  # 限制返回结果数量
+            )
+            
+            if "No knowledge found" in result or "Error" in result:
+                logger.info(f"[KNOWLEDGE] ⚠️ 知识库查询无结果: {result[:100]}...")
+                return None
+            
+            logger.info(f"[KNOWLEDGE] ✅ 知识库查询成功，返回{len(result)}字符的结果")
+            
+            # 格式化查询结果作为上下文
+            knowledge_context = f"""
+📚 **相关知识库信息**
+
+以下是与您的问题相关的知识库内容，供参考：
+
+{result}
+
+---
+请基于以上知识库信息，结合您的具体问题提供更准确的回答。
+"""
+            
+            return knowledge_context
+            
+        except Exception as e:
+            logger.error(f"[KNOWLEDGE] ❌ 知识库查询失败: {str(e)}")
+            return None
+    
+    def _infer_knowledge_query(self, user_input: str) -> tuple[str | None, str | None]:
+        """
+        根据用户输入自动推断知识库查询的domain和query。
+        
+        Args:
+            user_input: 用户输入的内容
+            
+        Returns:
+            (domain, query) 元组，如果无法推断则返回(None, None)
+        """
+        input_lower = user_input.lower()
+        
+        # 定义领域关键词映射
+        domain_keywords = {
+            "rocketmq": ["rocketmq", "tdmq", "消息队列", "mq", "broker", "namesrv", "nameserver"],
+            "kubernetes": ["k8s", "kubernetes", "pod", "deployment", "service", "kubectl", "namespace"],
+            "github": ["github", "git", "repository", "repo", "commit", "pull request", "issue"],
+            "docker": ["docker", "container", "image", "dockerfile", "docker-compose"],
+            "python": ["python", "pip", "pypi", "import", "def", "class", "pytest"],
+            "javascript": ["javascript", "js", "node", "npm", "react", "vue", "typescript"],
+            "general": []  # 通用领域，用于没有匹配到特定领域的情况
+        }
+        
+        # 根据关键词匹配领域
+        matched_domain = None
+        for domain, keywords in domain_keywords.items():
+            if any(keyword in input_lower for keyword in keywords):
+                matched_domain = domain
+                break
+        
+        # 如果没有匹配到特定领域，使用通用领域
+        if not matched_domain:
+            matched_domain = "general"
+        
+        # 提取查询关键词：移除领域关键词，保留核心问题
+        query_keywords = input_lower
+        for keyword in domain_keywords.get(matched_domain, []):
+            query_keywords = query_keywords.replace(keyword, "")
+        
+        # 清理查询关键词：移除标点符号和多余空格
+        import re
+        query_keywords = re.sub(r'[^\w\s]', ' ', query_keywords)
+        query_keywords = ' '.join(query_keywords.split())
+        
+        # 如果查询关键词为空，使用原始输入的前20个字符
+        if not query_keywords.strip():
+            query_keywords = user_input[:20].strip()
+        
+        logger.info(f"[KNOWLEDGE] 🔍 推断查询参数: domain={matched_domain}, query={query_keywords}")
+        
+        return matched_domain, query_keywords

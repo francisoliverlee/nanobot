@@ -61,15 +61,16 @@ class KnowledgeSearchTool(Tool):
         """Search knowledge base."""
         try:
             from loguru import logger
-            
+            config = load_config()
+
             logger.info(f"[KNOWLEDGE] 🔍 Search request:")
             logger.info(f"[KNOWLEDGE]   - Domain: {domain}")
             logger.info(f"[KNOWLEDGE]   - Query: {query}")
             logger.info(f"[KNOWLEDGE]   - Category: {category}")
             logger.info(f"[KNOWLEDGE]   - Tags: {tags}")
             logger.info(f"[KNOWLEDGE]   - Limit: {limit}")
-            
-            config = load_config()
+            logger.info(f"[KNOWLEDGE]   - Workspace: {config.agents.defaults.workspace}")
+
             workspace = Path(config.agents.defaults.workspace)
             
             store = LegacyKnowledgeStore(workspace)
