@@ -683,7 +683,7 @@ async def get():
                 currentAIMessage.innerHTML = `
                     <div class="avatar">AI</div>
                     <div class="message-content">
-                        <div class="streaming-sections"></div>
+                        <div class="streaming-sections">${response}</div>
                         <div class="timestamp">${new Date().toLocaleTimeString()}</div>
                     </div>
                 `;
@@ -789,10 +789,9 @@ async def get():
         // 处理流式分块数据
         function handleStreamChunk(data) {
             // 检查是否是新的agent响应（迭代开始或最终答案）
-            const isNewResponse = data.is_iteration_start || data.is_final_answer || 
-                                 (data.content_type === 'answer' && !isStreaming);
+            const isNewResponse = data.is_iteration_start || data.is_final_answer;
             
-            // 如果是新的agent响应，创建新消息
+            // 如果是新的agent响应或者还没有开始流式传输，创建新消息
             if (isNewResponse || !isStreaming) {
                 hideTypingIndicator();
                 isStreaming = true;
@@ -897,14 +896,14 @@ async def get():
             switch (toolStatus) {
                 case 'start':
                     // 直接使用已经智能处理过的工具命令
-                    toolContentDiv.innerHTML = `<div class=\"tool-status-start\">🔧 开始执行工具: <strong>${tool_command}</strong></div>`;
+                    toolContentDiv.innerHTML += `<div class=\"tool-status-start\">🔧 开始执行工具: <strong>${tool_command}</strong></div>`;
                     break;
                 case 'completed':
                     const duration = data.tool_duration ? data.tool_duration.toFixed(3) : '未知';
                     const result = data.tool_result || '无结果';
                     // 将\\n替换为实际的换行符
                     const formattedResult = result.replace(/\\n/g, '\\n');
-                    toolContentDiv.innerHTML = `
+                    toolContentDiv.innerHTML += `
                         <div class=\"tool-status-completed\">
                             ✅ 工具执行完成: <strong>${toolName}</strong>
                             <div class=\"tool-details\">
@@ -919,7 +918,7 @@ async def get():
                     const errorDuration = data.tool_duration ? data.tool_duration.toFixed(3) : '未知';
                     // 将\\n替换为实际的换行符
                     const formattedErrorMsg = errorMsg.replace(/\\n/g, '<br />');
-                    toolContentDiv.innerHTML = `
+                    toolContentDiv.innerHTML += `
                         <div class=\"tool-status-error\">
                             ❌ 工具执行失败: <strong>${toolName}</strong>
                             <div class=\"tool-details\">
