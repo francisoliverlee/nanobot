@@ -1,9 +1,7 @@
 """MCP (Model Context Protocol) tool for accessing external services."""
 
 import json
-from typing import Any, Optional
-from pathlib import Path
-import asyncio
+from typing import Any
 
 from nanobot.agent.tools.base import Tool
 from nanobot.config.loader import load_config
@@ -30,7 +28,7 @@ class MCPTool(Tool):
                     "description": "Name of the MCP server providing the tool"
                 },
                 "tool_name": {
-                    "type": "string", 
+                    "type": "string",
                     "description": "Name of the tool to execute"
                 },
                 "arguments": {
@@ -46,15 +44,15 @@ class MCPTool(Tool):
         try:
             # Load configuration
             config = load_config()
-            
+
             # Check if MCP server is configured
             if server_name not in config.mcp.servers:
                 return f"Error: MCP server '{server_name}' not found in configuration"
-            
+
             server_config = config.mcp.servers[server_name]
             if not server_config.enabled:
                 return f"Error: MCP server '{server_name}' is not enabled"
-            
+
             # Simulate MCP tool call (in a real implementation, this would connect to MCP server)
             # For now, return a placeholder response
             result = {
@@ -64,9 +62,9 @@ class MCPTool(Tool):
                 "status": "success",
                 "result": f"MCP tool '{tool_name}' called successfully with arguments: {json.dumps(arguments, indent=2)}"
             }
-            
+
             return json.dumps(result, indent=2)
-            
+
         except Exception as e:
             return f"Error calling MCP tool: {str(e)}"
 
@@ -111,7 +109,7 @@ class MCPKnowledgeSearchTool(Tool):
                     "default": 1
                 },
                 "page_size": {
-                    "type": "integer", 
+                    "type": "integer",
                     "description": "Number of results per page",
                     "minimum": 1,
                     "maximum": 50,
@@ -121,21 +119,21 @@ class MCPKnowledgeSearchTool(Tool):
             "required": ["server_name", "query", "knowledge_uuid", "data_type"]
         }
 
-    async def execute(self, server_name: str, query: str, knowledge_uuid: str, data_type: str, 
-                     page: int = 1, page_size: int = 10) -> str:
+    async def execute(self, server_name: str, query: str, knowledge_uuid: str, data_type: str,
+                      page: int = 1, page_size: int = 10) -> str:
         """Execute a knowledge search via MCP server."""
         try:
             # Load configuration
             config = load_config()
-            
+
             # Check if MCP server is configured
             if server_name not in config.mcp.servers:
                 return f"Error: MCP server '{server_name}' not found in configuration"
-            
+
             server_config = config.mcp.servers[server_name]
             if not server_config.enabled:
                 return f"Error: MCP server '{server_name}' is not enabled"
-            
+
             # Simulate knowledge search (in a real implementation, this would call MCP server)
             result = {
                 "server": server_name,
@@ -155,8 +153,8 @@ class MCPKnowledgeSearchTool(Tool):
                 ],
                 "total_results": 1
             }
-            
+
             return json.dumps(result, indent=2)
-            
+
         except Exception as e:
             return f"Error performing MCP knowledge search: {str(e)}"

@@ -354,7 +354,8 @@ MESSAGE_CONSUMER_GROUP_VISIBILITY、TOPIC_ROUTE_CONSISTENCY（检查器详细信
 
 ## 诊断流程说明
 
-RocketMQ诊断系统使用有限状态机（FSM）来管理诊断流程，包含多个检查器来验证消息系统的不同方面。每个检查器使用特定的admin API方法来收集诊断信息。
+RocketMQ诊断系统使用有限状态机（FSM）来管理诊断流程，包含多个检查器来验证消息系统的不同方面。每个检查器使用特定的admin
+API方法来收集诊断信息。
 
 ### 诊断流程步骤
 

@@ -20,6 +20,7 @@ from nanobot.utils.helpers import get_data_path
 
 try:
     import socketio
+
     SOCKETIO_AVAILABLE = True
 except ImportError:
     socketio = None
@@ -27,6 +28,7 @@ except ImportError:
 
 try:
     import msgpack  # noqa: F401
+
     MSGPACK_AVAILABLE = True
 except ImportError:
     MSGPACK_AVAILABLE = False
@@ -85,9 +87,9 @@ def _str_field(src: dict, *keys: str) -> str:
 
 
 def _make_synthetic_event(
-    message_id: str, author: str, content: Any,
-    meta: Any, group_id: str, converse_id: str,
-    timestamp: Any = None, *, author_info: Any = None,
+        message_id: str, author: str, content: Any,
+        meta: Any, group_id: str, converse_id: str,
+        timestamp: Any = None, *, author_info: Any = None,
 ) -> dict[str, Any]:
     """Build a synthetic ``message.add`` event dict."""
     payload: dict[str, Any] = {
@@ -391,8 +393,8 @@ class MochatChannel(BaseChannel):
             await self._handle_watch_payload(payload, "panel")
 
         for ev in ("notify:chat.inbox.append", "notify:chat.message.add",
-                    "notify:chat.message.update", "notify:chat.message.recall",
-                    "notify:chat.message.delete"):
+                   "notify:chat.message.update", "notify:chat.message.recall",
+                   "notify:chat.message.delete"):
             client.on(ev, self._build_notify_handler(ev))
 
         socket_url = (self.config.socket_url or self.config.base_url).strip().rstrip("/")
@@ -421,6 +423,7 @@ class MochatChannel(BaseChannel):
                 await self._handle_notify_inbox_append(payload)
             elif event_name.startswith("notify:chat.message."):
                 await self._handle_notify_chat_message(payload)
+
         return handler
 
     # ---- subscribe ---------------------------------------------------------
@@ -655,7 +658,8 @@ class MochatChannel(BaseChannel):
                 if not isinstance(event, dict):
                     continue
                 seq = event.get("seq")
-                if target_kind == "session" and isinstance(seq, int) and seq > self._session_cursor.get(target_id, prev):
+                if target_kind == "session" and isinstance(seq, int) and seq > self._session_cursor.get(target_id,
+                                                                                                        prev):
                     self._mark_session_cursor(target_id, seq)
                 if event.get("type") == "message.add":
                     await self._process_inbound_event(target_id, event, target_kind)
@@ -684,7 +688,8 @@ class MochatChannel(BaseChannel):
         group_id = _str_field(payload, "groupId")
         is_group = bool(group_id)
         was_mentioned = resolve_was_mentioned(payload, self.config.agent_user_id)
-        require_mention = target_kind == "panel" and is_group and resolve_require_mention(self.config, target_id, group_id)
+        require_mention = target_kind == "panel" and is_group and resolve_require_mention(self.config, target_id,
+                                                                                          group_id)
         use_delay = target_kind == "panel" and self.config.reply_delay_mode == "non-mention"
 
         if require_mention and not was_mentioned and not use_delay:
@@ -719,7 +724,8 @@ class MochatChannel(BaseChannel):
             seen_set.discard(seen_queue.popleft())
         return False
 
-    async def _enqueue_delayed_entry(self, key: str, target_id: str, target_kind: str, entry: MochatBufferedEntry) -> None:
+    async def _enqueue_delayed_entry(self, key: str, target_id: str, target_kind: str,
+                                     entry: MochatBufferedEntry) -> None:
         state = self._delay_states.setdefault(key, DelayState())
         async with state.lock:
             state.entries.append(entry)
@@ -731,7 +737,8 @@ class MochatChannel(BaseChannel):
         await asyncio.sleep(max(0, self.config.reply_delay_ms) / 1000.0)
         await self._flush_delayed_entries(key, target_id, target_kind, "timer", None)
 
-    async def _flush_delayed_entries(self, key: str, target_id: str, target_kind: str, reason: str, entry: MochatBufferedEntry | None) -> None:
+    async def _flush_delayed_entries(self, key: str, target_id: str, target_kind: str, reason: str,
+                                     entry: MochatBufferedEntry | None) -> None:
         state = self._delay_states.setdefault(key, DelayState())
         async with state.lock:
             if entry:
@@ -745,7 +752,8 @@ class MochatChannel(BaseChannel):
         if entries:
             await self._dispatch_entries(target_id, target_kind, entries, reason == "mention")
 
-    async def _dispatch_entries(self, target_id: str, target_kind: str, entries: list[MochatBufferedEntry], was_mentioned: bool) -> None:
+    async def _dispatch_entries(self, target_id: str, target_kind: str, entries: list[MochatBufferedEntry],
+                                was_mentioned: bool) -> None:
         if not entries:
             return
         last = entries[-1]

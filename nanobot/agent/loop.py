@@ -195,7 +195,7 @@ class AgentLoop:
 
         # 在构建消息前优先查询知识库
         knowledge_context = await self._query_knowledge_base(msg.content)
-        
+
         # 构建初始消息（如果存在知识库查询结果，将其作为额外上下文）
         messages = self.context.build_messages(
             history=session.get_history(),
@@ -209,7 +209,7 @@ class AgentLoop:
         # Agent loop
         iteration = 0
         final_content = None
-        
+
         # 记录整个消息处理的开始时间
         process_start_time = time.time()
 
@@ -228,13 +228,13 @@ class AgentLoop:
 
             # Call LLM
             logger.info(f"[LOOP] 🤖 Calling LLM with model: {self.model}")
-            
+
             # 记录LLM调用开始时间
             llm_start_time = time.time()
-            
+
             # 检查是否有流式回调函数
             stream_callback = getattr(self, 'stream_callback', None)
-            
+
             # 如果存在流式回调，传递迭代计数信息
             if stream_callback:
                 # 发送迭代开始信息
@@ -249,7 +249,7 @@ class AgentLoop:
                     await stream_callback(iteration_info)
                 else:
                     stream_callback(iteration_info)
-            
+
             response = await self.provider.chat(
                 messages=messages,
                 tools=self.tools.get_definitions(),
@@ -257,7 +257,7 @@ class AgentLoop:
                 stream=bool(stream_callback),
                 stream_callback=stream_callback
             )
-            
+
             # 记录LLM调用结束时间并计算耗时
             llm_end_time = time.time()
             llm_duration = llm_end_time - llm_start_time
@@ -319,7 +319,7 @@ class AgentLoop:
                                 command_parts = command.strip().split()
                                 if command_parts:
                                     display_tool_name = f"exec: {command_parts[0]}"
-                        
+
                         tool_start_info = {
                             "content": f"🔧 开始执行工具: {display_tool_name}\\n工具参数: {args_str[:1000]}...\\n",
                             "is_tool_call": True,
@@ -334,7 +334,7 @@ class AgentLoop:
 
                     try:
                         result = await self.tools.execute(tool_name, tool_args)
-                        
+
                         # 计算执行耗时
                         end_time = time.time()
                         duration = end_time - start_time
@@ -354,7 +354,7 @@ class AgentLoop:
                                     command_parts = command.strip().split()
                                     if command_parts:
                                         display_tool_name = f"exec: {command_parts[0]}"
-                            
+
                             tool_result_info = {
                                 "content": f"✅ 工具执行完成: {display_tool_name}\\n执行耗时: {duration:.3f}秒\\n执行结果: {result_preview}\\n",
                                 "is_tool_call": True,
@@ -376,11 +376,11 @@ class AgentLoop:
                         # 计算执行耗时
                         end_time = time.time()
                         duration = end_time - start_time
-                        
+
                         error_msg = f"工具执行失败: {str(e)}"
                         logger.error(f"[LOOP] ❌ {error_msg}")
                         logger.error(f"[LOOP] ⏱️  工具执行耗时: {duration:.3f}秒")
-                        
+
                         # 发送工具执行错误到前端
                         if stream_callback:
                             # 如果是exec工具，显示具体的命令而不是"exec"
@@ -392,7 +392,7 @@ class AgentLoop:
                                     command_parts = command.strip().split()
                                     if command_parts:
                                         display_tool_name = f"exec: {command_parts[0]}"
-                            
+
                             tool_error_info = {
                                 "content": f"❌ 工具执行失败: {display_tool_name}\\n错误信息: {error_msg}\\n执行耗时: {duration:.3f}秒\\n",
                                 "is_tool_call": True,
@@ -406,7 +406,7 @@ class AgentLoop:
                                 await stream_callback(tool_error_info)
                             else:
                                 stream_callback(tool_error_info)
-                        
+
                         # 添加错误结果到消息中
                         messages = self.context.add_tool_result(
                             messages, tool_call.id, tool_name, error_msg
@@ -432,7 +432,7 @@ class AgentLoop:
         process_end_time = time.time()
         process_duration = process_end_time - process_start_time
         logger.info(f"[LOOP] ⏱️  整个消息处理总耗时: {process_duration:.3f}秒")
-        
+
         # 记录详细的耗时统计
         logger.info(f"[LOOP] 📊 耗时统计详情:")
         logger.info(f"[LOOP] 📊 - LLM调用总耗时: {llm_duration:.3f}秒")
@@ -498,7 +498,7 @@ class AgentLoop:
         # Agent loop (limited for announce handling)
         iteration = 0
         final_content = None
-        
+
         # 记录整个系统消息处理的开始时间
         process_start_time = time.time()
         llm_duration = 0.0
@@ -508,13 +508,13 @@ class AgentLoop:
 
             # 记录LLM调用开始时间
             llm_start_time = time.time()
-            
+
             response = await self.provider.chat(
                 messages=messages,
                 tools=self.tools.get_definitions(),
                 model=self.model
             )
-            
+
             # 记录LLM调用结束时间并计算耗时
             llm_end_time = time.time()
             llm_duration += llm_end_time - llm_start_time
@@ -551,7 +551,7 @@ class AgentLoop:
 
                     try:
                         result = await self.tools.execute(tool_name, tool_args)
-                        
+
                         # 计算执行耗时
                         end_time = time.time()
                         duration = end_time - start_time
@@ -567,11 +567,11 @@ class AgentLoop:
                         # 计算执行耗时
                         end_time = time.time()
                         duration = end_time - start_time
-                        
+
                         error_msg = f"工具执行失败: {str(e)}"
                         logger.error(f"[SYSTEM] ❌ {error_msg}")
                         logger.error(f"[SYSTEM] ⏱️  工具执行耗时: {duration:.3f}秒")
-                        
+
                         # 添加错误结果到消息中
                         messages = self.context.add_tool_result(
                             messages, tool_call.id, tool_name, error_msg
@@ -587,7 +587,7 @@ class AgentLoop:
         process_end_time = time.time()
         process_duration = process_end_time - process_start_time
         logger.info(f"[SYSTEM] ⏱️  系统消息处理总耗时: {process_duration:.3f}秒")
-        
+
         # 记录详细的耗时统计
         logger.info(f"[SYSTEM] 📊 耗时统计详情:")
         logger.info(f"[SYSTEM] 📊 - LLM调用总耗时: {llm_duration:.3f}秒")
@@ -735,10 +735,10 @@ class AgentLoop:
 
         # 记录开始时间
         start_time = time.time()
-        
+
         # 设置流式回调函数，传递迭代计数和耗时信息
         original_stream_callback = getattr(self, 'stream_callback', None)
-        
+
         if original_stream_callback:
             async def enhanced_stream_callback(context_info: dict):
                 """增强的流式回调，添加迭代计数和耗时信息"""
@@ -746,21 +746,21 @@ class AgentLoop:
                 context_info['iteration_count'] = context_info.get('iteration_count', 0)
                 context_info['timestamp'] = time.time()
                 context_info['duration_from_start'] = round(time.time() - start_time, 3)
-                
+
                 # 调用原始回调函数
                 if asyncio.iscoroutinefunction(original_stream_callback):
                     await original_stream_callback(context_info)
                 else:
                     original_stream_callback(context_info)
-            
+
             self.stream_callback = enhanced_stream_callback
 
         response = await self._process_message(msg)
-        
+
         # 恢复原始回调函数
         if original_stream_callback:
             self.stream_callback = original_stream_callback
-        
+
         return response.content if response else ""
 
     async def stream_callback(self, context_info: dict) -> None:
@@ -779,44 +779,44 @@ class AgentLoop:
         """
         # 安全获取content参数，处理可能的字典类型
         content = context_info.get("content", "")
-        
+
         # 如果content是字典，提取content字段
         if isinstance(content, dict):
             content = content.get("content", "")
-        
+
         # 确保content是字符串类型
         if not isinstance(content, str):
             logger.warning(f"[STREAM] ⚠️ Invalid content type: {type(content)}")
             logger.warning(f"[STREAM] ⚠️ content: {content}")
             content = str(content)
-        
+
         if not content.strip():
             return
-        
+
         # 根据上下文信息确定响应类型
         response_type = self._determine_response_type(context_info)
-        
+
         # 根据类型进行不同的处理
         if response_type == "reasoning":
             # 意图识别或推理过程
             logger.info(f"[STREAM] 🤔 意图识别 (模型: {context_info.get('model', 'unknown')}): {content}")
             # 这里可以调用UI更新方法，显示意图识别内容
-            
+
         elif response_type == "tool_call":
             # 工具调用
             logger.info(f"[STREAM] 🔧 工具执行 (模型: {context_info.get('model', 'unknown')}): {content}")
             # 这里可以调用UI更新方法，显示工具执行内容
-            
+
         elif response_type == "final_answer":
             # 最终答案
             logger.info(f"[STREAM] 💬 最终回答 (模型: {context_info.get('model', 'unknown')}): {content}")
             # 这里可以调用UI更新方法，显示最终回答内容
-            
+
         else:
             # 普通文本内容
             logger.info(f"[STREAM] 📝 普通内容 (模型: {context_info.get('model', 'unknown')}): {content}")
             # 这里可以调用UI更新方法，显示普通内容
-    
+
     def _determine_response_type(self, context_info: dict) -> str:
         """
         基于上下文信息确定响应内容的类型。
@@ -829,50 +829,50 @@ class AgentLoop:
         """
         # 安全获取content参数，处理可能的字典类型
         content = context_info.get("content", "")
-        
+
         # 如果content是字典，提取content字段
         if isinstance(content, dict):
             content = content.get("content", "")
-        
+
         # 确保content是字符串类型
         if not isinstance(content, str):
             logger.warning(f"Unexpected content type: {type(content)}")
             logger.warning(f"Unexpected content: {content}")
             content = str(content)
-        
+
         content_lower = content.lower().strip()
-        
+
         # 优先使用上下文信息中的标志
         if context_info.get("is_tool_call", False):
             return "tool_call"
-        
+
         if context_info.get("is_reasoning", False):
             return "reasoning"
-        
+
         if context_info.get("is_final_answer", False):
             return "final_answer"
-        
+
         # 如果没有上下文标志，则基于内容分析
-        
+
         # 检查是否是推理/意图识别内容
         reasoning_keywords = ["think", "reason", "analyze", "consider", "plan", "strategy", "步骤", "思考", "分析"]
         if any(keyword in content_lower for keyword in reasoning_keywords):
             return "reasoning"
-        
+
         # 检查是否是工具调用
         tool_keywords = ["tool", "function", "call", "execute", "run", "工具", "函数", "调用", "执行"]
         if any(keyword in content_lower for keyword in tool_keywords):
             return "tool_call"
-        
+
         # 检查是否是最终答案的开始
         answer_keywords = ["answer", "result", "conclusion", "summary", "回答", "结果", "结论", "总结"]
         if any(keyword in content_lower for keyword in answer_keywords):
             return "final_answer"
-        
+
         # 检查JSON格式的工具调用
         if content.strip().startswith('{') and 'name' in content_lower and 'arguments' in content_lower:
             return "tool_call"
-        
+
         return "normal"
 
     async def _query_knowledge_base(self, user_input: str) -> str | None:
@@ -886,13 +886,12 @@ class AgentLoop:
             知识库查询结果，如果没有相关结果则返回None
         """
         from loguru import logger
-        import asyncio
-        
+
         # 如果用户输入太短，不进行知识库查询
         if len(user_input.strip()) < 5:
             logger.info("[KNOWLEDGE] 📝 用户输入太短，跳过知识库查询")
             return None
-        
+
         # 发送知识库查询开始的流式回调
         if hasattr(self, 'stream_callback') and self.stream_callback:
             await self._send_stream_callback({
@@ -901,10 +900,10 @@ class AgentLoop:
                 "knowledge_status": "start",
                 "knowledge_query": user_input[:100]
             })
-        
+
         # 自动推断知识库查询的domain和query
         domain, query = self._infer_knowledge_query(user_input)
-        
+
         if not domain or not query:
             logger.info("[KNOWLEDGE] 📝 无法推断知识库查询参数，跳过查询")
             if hasattr(self, 'stream_callback') and self.stream_callback:
@@ -914,11 +913,11 @@ class AgentLoop:
                     "knowledge_status": "skipped"
                 })
             return None
-        
+
         logger.info(f"[KNOWLEDGE] 🔍 开始知识库查询:")
         logger.info(f"[KNOWLEDGE]   - Domain: {domain}")
         logger.info(f"[KNOWLEDGE]   - Query: {query}")
-        
+
         # 发送查询参数的流式回调
         if hasattr(self, 'stream_callback') and self.stream_callback:
             await self._send_stream_callback({
@@ -928,7 +927,7 @@ class AgentLoop:
                 "knowledge_domain": domain,
                 "knowledge_query": query
             })
-        
+
         try:
             # 使用KnowledgeSearchTool执行查询
             knowledge_tool = self.tools.get("knowledge_search")
@@ -941,14 +940,14 @@ class AgentLoop:
                         "knowledge_status": "error"
                     })
                 return None
-            
+
             # 执行知识库查询
             result = await knowledge_tool.execute(
                 domain=domain,
                 query=query,
                 limit=5  # 限制返回结果数量
             )
-            
+
             if "No knowledge found" in result or "Error" in result:
                 logger.info(f"[KNOWLEDGE] ⚠️ 知识库查询无结果: {result[:100]}...")
                 if hasattr(self, 'stream_callback') and self.stream_callback:
@@ -958,14 +957,14 @@ class AgentLoop:
                         "knowledge_status": "no_results"
                     })
                 return None
-            
+
             logger.info(f"[KNOWLEDGE] ✅ 知识库查询成功，返回{len(result)}字符的结果")
-            
+
             # 解析结果数量
             import re
             result_count_match = re.search(r'Found (\d+) knowledge items', result)
             result_count = int(result_count_match.group(1)) if result_count_match else 0
-            
+
             # 发送查询成功的流式回调
             if hasattr(self, 'stream_callback') and self.stream_callback:
                 await self._send_stream_callback({
@@ -975,7 +974,7 @@ class AgentLoop:
                     "knowledge_count": result_count,
                     "knowledge_result": result[:500] + "..." if len(result) > 500 else result
                 })
-            
+
             # 格式化查询结果作为上下文
             knowledge_context = f"""
 📚 **相关知识库信息**
@@ -987,9 +986,9 @@ class AgentLoop:
 ---
 请基于以上知识库信息，结合您的具体问题提供更准确的回答。
 """
-            
+
             return knowledge_context
-            
+
         except Exception as e:
             logger.error(f"[KNOWLEDGE] ❌ 知识库查询失败: {str(e)}")
             if hasattr(self, 'stream_callback') and self.stream_callback:
@@ -999,7 +998,7 @@ class AgentLoop:
                     "knowledge_status": "error"
                 })
             return None
-    
+
     async def _send_stream_callback(self, context_info: dict):
         """发送流式回调信息的辅助方法."""
         if hasattr(self, 'stream_callback') and self.stream_callback:
@@ -1008,7 +1007,7 @@ class AgentLoop:
                 await self.stream_callback(context_info)
             else:
                 self.stream_callback(context_info)
-    
+
     def _infer_knowledge_query(self, user_input: str) -> tuple[str | None, str | None]:
         """
         根据用户输入自动推断知识库查询的domain和query。
@@ -1020,39 +1019,40 @@ class AgentLoop:
             (domain, query) 元组，如果无法推断则返回(None, None)
         """
         input_lower = user_input.lower()
-        
+
         # 定义领域关键词映射
         domain_keywords = {
-            "rocketmq": ["rocketmq", "tdmq", "消息队列", "mq", "broker", "namesrv", "nameserver", "cluster", "topic", "consumer", "producer", "group"],
+            "rocketmq": ["rocketmq", "tdmq", "消息队列", "mq", "broker", "namesrv", "nameserver", "cluster", "topic",
+                         "consumer", "producer", "group"],
             "kubernetes": ["k8s", "kubernetes", "pod", "deployment", "service", "kubectl", "namespace"],
             "general": []  # 通用领域，用于没有匹配到特定领域的情况
         }
-        
+
         # 根据关键词匹配领域
         matched_domain = None
         for domain, keywords in domain_keywords.items():
             if any(keyword in input_lower for keyword in keywords):
                 matched_domain = domain
                 break
-        
+
         # 如果没有匹配到特定领域，使用通用领域
         if not matched_domain:
             matched_domain = "general"
-        
+
         # 提取查询关键词：移除领域关键词，保留核心问题
         query_keywords = input_lower
         for keyword in domain_keywords.get(matched_domain, []):
             query_keywords = query_keywords.replace(keyword, "")
-        
+
         # 清理查询关键词：移除标点符号和多余空格
         import re
         query_keywords = re.sub(r'[^\w\s]', ' ', query_keywords)
         query_keywords = ' '.join(query_keywords.split())
-        
+
         # 如果查询关键词为空，使用原始输入的前20个字符
         if not query_keywords.strip():
             query_keywords = user_input[:20].strip()
-        
+
         logger.info(f"[KNOWLEDGE] 🔍 推断查询参数: domain={matched_domain}, query={query_keywords}")
-        
+
         return matched_domain, query_keywords

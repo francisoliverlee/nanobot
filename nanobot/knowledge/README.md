@@ -96,19 +96,23 @@ item_id = rocketmq_manager.add_checker_info(
 ## 内置知识内容
 
 ### 故障排查指南
+
 - 消息发送失败排查指南
 - 消费者组订阅一致性异常排查
 - 消息堆积问题排查
 
 ### 配置指南
+
 - RocketMQ Broker核心配置参数
 - NameServer配置最佳实践
 
 ### 最佳实践
+
 - RocketMQ消息设计最佳实践
 - 消费者组设计最佳实践
 
 ### 诊断检查器
+
 - TOPIC_VALIDITY: Topic有效性检查器
 - CONSUMER_GROUP_VALIDITY: 消费者组有效性检查器
 - BROKER_HEALTH: Broker健康状态检查器

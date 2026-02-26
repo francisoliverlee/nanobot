@@ -2,12 +2,12 @@
 
 import json
 from datetime import datetime
-from typing import Any, Dict, List, Optional
 from pathlib import Path
+from typing import Any, List, Optional
 
 from nanobot.agent.tools.base import Tool
-from nanobot.knowledge.store import DomainKnowledgeManager
 from nanobot.config.loader import load_config
+from nanobot.knowledge.store import DomainKnowledgeManager
 
 
 class KnowledgeSearchTool(Tool):
@@ -56,8 +56,8 @@ class KnowledgeSearchTool(Tool):
             "required": ["domain", "query"]
         }
 
-    async def execute(self, domain: str, query: str, category: Optional[str] = None, 
-                     tags: Optional[List[str]] = None, limit: int = 10) -> str:
+    async def execute(self, domain: str, query: str, category: Optional[str] = None,
+                      tags: Optional[List[str]] = None, limit: int = 10) -> str:
         """Search knowledge base."""
         try:
             from loguru import logger
@@ -72,11 +72,11 @@ class KnowledgeSearchTool(Tool):
             logger.info(f"[KNOWLEDGE]   - Workspace: {config.agents.defaults.workspace}")
 
             workspace = Path(config.agents.defaults.workspace)
-            
+
             # Use ChromaKnowledgeStore for vector-based semantic search
             from nanobot.knowledge.store import ChromaKnowledgeStore
             store = ChromaKnowledgeStore(workspace)
-            
+
             # Search knowledge
             results = store.search_knowledge(
                 query=query,
@@ -84,20 +84,20 @@ class KnowledgeSearchTool(Tool):
                 category=category,
                 tags=tags
             )
-            
+
             logger.info(f"[KNOWLEDGE] 📊 Search results: {len(results)} items found")
-            
+
             # Apply limit
             results = results[:limit]
-            
+
             if not results:
                 logger.info(f"[KNOWLEDGE] ⚠️  No knowledge found")
                 return f"No knowledge found for domain '{domain}' with query '{query}'"
-            
+
             # Log result titles
             for i, item in enumerate(results, 1):
                 logger.info(f"[KNOWLEDGE]   {i}. {item.title} (score: {getattr(item, 'similarity_score', 'N/A')})")
-            
+
             # Format results
             formatted_results = []
             for i, item in enumerate(results, 1):
@@ -111,11 +111,12 @@ class KnowledgeSearchTool(Tool):
 
 ---
 """)
-            
+
             result_text = f"Found {len(results)} knowledge items:\n" + "\n".join(formatted_results)
             logger.info(f"[KNOWLEDGE] ✅ Returning {len(result_text)} chars of formatted results")
+            logger.info(f"[KNOWLEDGE] 📝 Returning {result_text}")
             return result_text
-            
+
         except Exception as e:
             from loguru import logger
             logger.error(f"[KNOWLEDGE] ❌ Error searching knowledge base: {str(e)}")
@@ -172,17 +173,17 @@ class KnowledgeAddTool(Tool):
             "required": ["domain", "category", "title", "content"]
         }
 
-    async def execute(self, domain: str, category: str, title: str, content: str, 
-                     tags: Optional[List[str]] = None, priority: int = 1) -> str:
+    async def execute(self, domain: str, category: str, title: str, content: str,
+                      tags: Optional[List[str]] = None, priority: int = 1) -> str:
         """Add knowledge to the knowledge base."""
         try:
             config = load_config()
             workspace = Path(config.agents.defaults.workspace)
-            
+
             # Use ChromaKnowledgeStore for vector-based knowledge storage
             from nanobot.knowledge.store import ChromaKnowledgeStore
             store = ChromaKnowledgeStore(workspace)
-            
+
             item_id = store.add_knowledge(
                 domain=domain,
                 category=category,
@@ -191,9 +192,9 @@ class KnowledgeAddTool(Tool):
                 tags=tags,
                 priority=priority
             )
-            
+
             return f"Successfully added knowledge item '{title}' with ID: {item_id}"
-            
+
         except Exception as e:
             return f"Error adding knowledge: {str(e)}"
 
@@ -217,7 +218,8 @@ class DomainKnowledgeTool(Tool):
                 "action": {
                     "type": "string",
                     "description": "Action to perform",
-                    "enum": ["search_troubleshooting", "search_configuration", "search_checkers", "add_troubleshooting", "add_configuration", "add_checker", "list_checkers"]
+                    "enum": ["search_troubleshooting", "search_configuration", "search_checkers", "add_troubleshooting",
+                             "add_configuration", "add_checker", "list_checkers"]
                 },
                 "query": {
                     "type": "string",
@@ -257,69 +259,69 @@ class DomainKnowledgeTool(Tool):
         }
 
     async def execute(self, action: str, query: Optional[str] = None, title: Optional[str] = None,
-                     content: Optional[str] = None, checker_name: Optional[str] = None,
-                     description: Optional[str] = None, usage: Optional[str] = None,
-                     admin_api: Optional[str] = None, tags: Optional[List[str]] = None) -> str:
+                      content: Optional[str] = None, checker_name: Optional[str] = None,
+                      description: Optional[str] = None, usage: Optional[str] = None,
+                      admin_api: Optional[str] = None, tags: Optional[List[str]] = None) -> str:
         """Execute domain knowledge action."""
         try:
             config = load_config()
             workspace = Path(config.agents.defaults.workspace)
-            
+
             # Use ChromaKnowledgeStore for vector-based knowledge storage
             from nanobot.knowledge.store import ChromaKnowledgeStore
             store = ChromaKnowledgeStore(workspace)
             domain_manager = DomainKnowledgeManager(store, "rocketmq")
-            
+
             if action == "search_troubleshooting":
                 results = domain_manager.search_troubleshooting(query=query, tags=tags)
                 return self._format_results("RocketMQ Troubleshooting", results)
-            
+
             elif action == "search_configuration":
                 results = domain_manager.search_configuration(query=query, tags=tags)
                 return self._format_results("RocketMQ Configuration", results)
-            
+
             elif action == "search_checkers":
                 results = domain_manager.search_checkers(query=query)
                 return self._format_results("RocketMQ Diagnostic Checkers", results)
-            
+
             elif action == "list_checkers":
                 results = domain_manager.get_all_checkers()
                 return self._format_results("All RocketMQ Diagnostic Checkers", results)
-            
+
             elif action == "add_troubleshooting":
                 if not title or not content:
                     return "Error: title and content are required for add_troubleshooting"
-                
+
                 item_id = domain_manager.add_troubleshooting_guide(title, content, tags)
                 return f"Added RocketMQ troubleshooting guide: {title} (ID: {item_id})"
-            
+
             elif action == "add_configuration":
                 if not title or not content:
                     return "Error: title and content are required for add_configuration"
-                
+
                 item_id = domain_manager.add_configuration_guide(title, content, tags)
                 return f"Added RocketMQ configuration guide: {title} (ID: {item_id})"
-            
+
             elif action == "add_checker":
                 if not checker_name or not description or not usage:
                     return "Error: checker_name, description, and usage are required for add_checker"
-                
+
                 item_id = domain_manager.add_checker_info(checker_name, description, usage, admin_api, tags)
                 return f"Added RocketMQ checker info: {checker_name} (ID: {item_id})"
-            
+
             else:
                 return f"Unknown action: {action}"
-                
+
         except Exception as e:
             return f"Error performing domain knowledge action: {str(e)}"
-    
+
     def _format_results(self, title: str, results: List) -> str:
         """Format search results."""
         if not results:
             return f"No {title.lower()} found"
-        
+
         formatted = [f"# {title}", f"Found {len(results)} items:", ""]
-        
+
         for i, item in enumerate(results, 1):
             formatted.append(f"## {i}. {item.title}")
             formatted.append(f"**Category**: {item.category}")
@@ -330,7 +332,7 @@ class DomainKnowledgeTool(Tool):
             formatted.append(item.content)
             formatted.append("---")
             formatted.append("")
-        
+
         return "\n".join(formatted)
 
 
@@ -369,37 +371,39 @@ class KnowledgeExportTool(Tool):
         try:
             config = load_config()
             workspace = Path(config.agents.defaults.workspace)
-            
+
             # Use ChromaKnowledgeStore for vector-based knowledge storage
             from nanobot.knowledge.store import ChromaKnowledgeStore
             store = ChromaKnowledgeStore(workspace)
-            
+
             if format == "json":
                 export_data = store.export_knowledge(domain=domain)
                 return json.dumps(export_data, indent=2, ensure_ascii=False)
-            
+
             elif format == "markdown":
                 results = store.search_knowledge(domain=domain)
-                
+
                 if not results:
                     return "No knowledge items found to export"
-                
-                markdown = [f"# Knowledge Base Export", f"**Domain**: {domain or 'All'}", f"**Export Date**: {datetime.now().isoformat()}", ""]
-                
+
+                markdown = [f"# Knowledge Base Export", f"**Domain**: {domain or 'All'}",
+                            f"**Export Date**: {datetime.now().isoformat()}", ""]
+
                 for item in results:
                     markdown.append(f"## {item.title}")
-                    markdown.append(f"**Domain**: {item.domain} | **Category**: {item.category} | **Priority**: {item.priority}")
+                    markdown.append(
+                        f"**Domain**: {item.domain} | **Category**: {item.category} | **Priority**: {item.priority}")
                     markdown.append(f"**Tags**: {', '.join(item.tags)}")
                     markdown.append(f"**Created**: {item.created_at}")
                     markdown.append("")
                     markdown.append(item.content)
                     markdown.append("---")
                     markdown.append("")
-                
+
                 return "\n".join(markdown)
-            
+
             else:
                 return f"Unsupported format: {format}"
-                
+
         except Exception as e:
             return f"Error exporting knowledge base: {str(e)}"

@@ -344,7 +344,7 @@ def gateway(
     bus = MessageBus()
     provider = _make_provider(config)
     session_manager = SessionManager(config.workspace_path)
-    
+
     # 在启动时预初始化知识库，确保启动时打印初始化日志
     try:
         from pathlib import Path
@@ -354,7 +354,7 @@ def gateway(
         console.print("🚀 正在初始化 RocketMQ 知识库...")
         from nanobot.knowledge.rocketmq_init import initialize_rocketmq_knowledge
         result = initialize_rocketmq_knowledge(workspace)
-        
+
         if isinstance(result, tuple):
             # ChromaKnowledgeStore 返回 (item_count, chunk_count)
             item_count, chunk_count = result
@@ -362,7 +362,7 @@ def gateway(
         else:
             # 返回 item_count
             console.print(f"✅ RocketMQ 知识库初始化完成: {result} 个条目")
-            
+
     except Exception as e:
         console.print(f"⚠️  知识库初始化警告: {str(e)}")
 
@@ -480,15 +480,14 @@ def agent(
     try:
         from pathlib import Path
         workspace = Path(config.agents.defaults.workspace)
-        
+
         console.print("📚 正在初始化知识库系统...")
-        
 
         # 初始化 RocketMQ 知识库，确保启动时打印初始化日志
         console.print("🚀 正在初始化 RocketMQ 知识库...")
         from nanobot.knowledge.rocketmq_init import initialize_rocketmq_knowledge
         result = initialize_rocketmq_knowledge(workspace)
-        
+
         if isinstance(result, tuple):
             # ChromaKnowledgeStore 返回 (item_count, chunk_count)
             item_count, chunk_count = result
@@ -496,7 +495,7 @@ def agent(
         else:
             # 返回 item_count
             console.print(f"✅ RocketMQ 知识库初始化完成: {result} 个条目")
-            
+
     except Exception as e:
         console.print(f"⚠️  知识库初始化警告: {str(e)}")
 
@@ -893,27 +892,27 @@ def webui(
     from nanobot.web.web import web_app, initialize_webui_resources
     from nanobot.config.loader import load_config
     from pathlib import Path
-    
+
     console.print(f"{__logo__} Starting web ui on http://{host}:{port}")
-    
+
     try:
         config = load_config()
         workspace = Path(config.agents.defaults.workspace)
-        
+
         # 01 初始化 RocketMQ 知识库。如果初始化过，会跳过
         from nanobot.knowledge.rocketmq_init import initialize_rocketmq_knowledge
         initialize_rocketmq_knowledge(workspace)
-        
+
         # 02 初始化 Web UI 资源：provider 和 agent_loop
         console.print("🔧 正在初始化 Web UI 资源...")
         if initialize_webui_resources():
             console.print("✅ Web UI 资源初始化完成")
         else:
             console.print("⚠️  Web UI 资源初始化警告: 未配置 API 密钥")
-        
+
     except Exception as e:
         console.print(f"⚠️  初始化警告: {str(e)}")
-    
+
     import uvicorn
     uvicorn.run(web_app, host=host, port=port)
 
@@ -951,9 +950,6 @@ def status():
             else:
                 has_key = bool(p.api_key)
                 console.print(f"{spec.label}: {'[green]✓[/green]' if has_key else '[dim]not set[/dim]'}")
-
-
-
 
 
 if __name__ == "__main__":

@@ -2,12 +2,11 @@
 
 import asyncio
 import re
-from typing import Any
 
 from loguru import logger
-from slack_sdk.socket_mode.websockets import SocketModeClient
 from slack_sdk.socket_mode.request import SocketModeRequest
 from slack_sdk.socket_mode.response import SocketModeResponse
+from slack_sdk.socket_mode.websockets import SocketModeClient
 from slack_sdk.web.async_client import AsyncWebClient
 
 from nanobot.bus.events import OutboundMessage
@@ -91,9 +90,9 @@ class SlackChannel(BaseChannel):
             logger.error(f"Error sending Slack message: {e}")
 
     async def _on_socket_request(
-        self,
-        client: SocketModeClient,
-        req: SocketModeRequest,
+            self,
+            client: SocketModeClient,
+            req: SocketModeRequest,
     ) -> None:
         """Handle incoming Socket Mode requests."""
         if req.type != "events_api":

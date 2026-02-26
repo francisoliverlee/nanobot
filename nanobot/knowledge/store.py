@@ -1,10 +1,10 @@
 """Knowledge base storage system for domain-specific knowledge."""
 
 import json
-from pathlib import Path
-from datetime import datetime
-from typing import Dict, List, Optional, Any, Union
 from dataclasses import dataclass, asdict
+from datetime import datetime
+from pathlib import Path
+from typing import Dict, List, Optional, Any
 
 import chromadb
 from chromadb.config import Settings
@@ -12,9 +12,8 @@ from loguru import logger
 
 from nanobot.utils.helpers import ensure_dir
 from .rag_config import RAGConfig
-from .vector_embedder import VectorEmbedder, EmbeddingModelError
 from .text_chunker import TextChunker
-
+from .vector_embedder import VectorEmbedder
 
 
 class RAGKnowledgeError(Exception):
@@ -24,7 +23,7 @@ class RAGKnowledgeError(Exception):
 
 class ChromaConnectionError(RAGKnowledgeError):
     """Chroma 连接错误."""
-    
+
     def __init__(self, message: str):
         super().__init__(
             f"Chroma 数据库连接失败: {message}\n"
@@ -48,23 +47,20 @@ class KnowledgeItem:
     updated_at: str
     source: str = "user"  # "user" or "system"
     priority: int = 1  # 1-5, higher is more important
-    
+
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for JSON serialization."""
         return asdict(self)
-    
+
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "KnowledgeItem":
         """Create from dictionary."""
         return cls(**data)
 
 
-
-
-
 class ChromaKnowledgeStore:
     """基于 Chroma 的知识库存储系统."""
-    
+
     def __init__(self, workspace: Path, config: Optional[RAGConfig] = None):
         """初始化知识库.
         
@@ -78,24 +74,24 @@ class ChromaKnowledgeStore:
         """
         import time
         start_time = time.time()
-        
+
         self.workspace = workspace
         self.config = config or RAGConfig()
         self.knowledge_dir = ensure_dir(workspace / "knowledge")
         self.chroma_dir = ensure_dir(self.knowledge_dir / "chroma_db")
         self.init_status_file = self.knowledge_dir / "init_status.json"
-        
+
         logger.info("🏗️  开始初始化 RAG 知识库 Chroma")
         logger.info(f"   - 工作空间: {workspace}")
         logger.info(f"   - 知识库目录: {self.knowledge_dir}")
         logger.info(f"   - Chroma 数据库: {self.chroma_dir}")
-        
+
         # 初始化组件
         logger.info("🔧 初始化 RAG 知识库组件...")
         logger.info(f"   - 向量化模型: {self.config.embedding_model}")
         logger.info(f"   - 分块大小: {self.config.chunk_size}")
         logger.info(f"   - 分块重叠: {self.config.chunk_overlap}")
-        
+
         self.embedder = VectorEmbedder(self.config.embedding_model)
         self.chunker = TextChunker(
             chunk_size=self.config.chunk_size,
@@ -105,14 +101,23 @@ class ChromaKnowledgeStore:
         self._init_chroma()
         self._init_status: Dict[str, Any] = {}
         self._load_init_status()
-        
-        # 自动初始化内置知识
-        logger.info("📚 开始自动初始化内置知识...")
-        self._auto_initialize_builtin_knowledge()
-        
+
+        # 延迟初始化内置知识（在需要时再初始化）
+        self._builtin_knowledge_initialized = False
+
         elapsed = time.time() - start_time
         logger.info(f"✅ RAG 知识库Chroma初始化完成，总耗时: {elapsed:.2f} 秒")
-    
+        logger.info("📚 内置知识库将在首次使用时自动初始化")
+
+    def _ensure_builtin_knowledge_initialized(self) -> None:
+        """确保内置知识库已初始化（延迟初始化）."""
+        if not self._builtin_knowledge_initialized:
+            logger.info("🚀 开始延迟初始化内置知识库...")
+            # 只设置初始化标记，不实际执行初始化
+            # RocketMQ 知识库将在需要时由 RocketMQKnowledgeInitializer 单独初始化
+            self._builtin_knowledge_initialized = True
+            logger.info("✅ 内置知识库延迟初始化完成（仅设置标记，实际初始化由各知识库模块负责）")
+
     def _init_chroma(self) -> None:
         """初始化 Chroma 客户端.
         
@@ -132,7 +137,7 @@ class ChromaKnowledgeStore:
         except Exception as e:
             logger.error(f"Chroma 客户端初始化失败: {str(e)}", exc_info=True)
             raise ChromaConnectionError(str(e))
-    
+
     def _get_or_create_collection(self, domain: str):
         """获取或创建 Chroma 集合.
         
@@ -146,18 +151,18 @@ class ChromaKnowledgeStore:
             ChromaConnectionError: 集合创建失败时抛出
         """
         collection_name = f"knowledge_{domain}"
-        
+
         try:
             # 尝试获取现有集合
             logger.debug(f"🔍 尝试获取现有集合: {collection_name}")
             collection = self.chroma_client.get_collection(name=collection_name)
-            
+
             # 获取集合统计信息
             collection_count = collection.count()
             logger.info(f"✅ 获取现有集合成功: {collection_name}")
-            logger.info(f"   - 文档数量: {collection_count}")
+            logger.info(f"   - 集合数量: {collection_count}")
             logger.info(f"   - 创建时间: {collection.metadata.get('created_at', '未知')}")
-            
+
             return collection
         except Exception:
             # 集合不存在，创建新集合
@@ -178,144 +183,139 @@ class ChromaKnowledgeStore:
             except Exception as e:
                 logger.error(f"❌ 集合创建失败: {collection_name}, 错误: {str(e)}", exc_info=True)
                 raise ChromaConnectionError(f"创建集合失败: {str(e)}")
-    
+
     def _load_init_status(self) -> None:
         """加载初始化状态文件."""
         if self.init_status_file.exists():
             try:
                 with open(self.init_status_file, 'r', encoding='utf-8') as f:
                     self._init_status = json.load(f)
-                logger.info(f"加载初始化状态: {len(self._init_status)} 个领域")
+                logger.info(f"✅ 初始化状态文件加载成功: {self.init_status_file}")
+                logger.debug(f"   - 文件内容: {json.dumps(self._init_status, ensure_ascii=False)}")
             except (json.JSONDecodeError, KeyError) as e:
-                logger.warning(f"初始化状态文件加载失败: {str(e)}")
+                logger.warning(f"⚠️ 初始化状态文件加载失败: {str(e)}")
                 self._init_status = {}
         else:
-            logger.info("初始化状态文件不存在，创建新状态")
+            logger.info(f"📝 初始化状态文件不存在: {self.init_status_file}")
+            logger.info("   创建新的初始化状态")
             self._init_status = {}
-    
+
     def _save_init_status(self) -> None:
         """保存初始化状态到文件."""
         try:
+            # 确保目录存在
+            self.init_status_file.parent.mkdir(parents=True, exist_ok=True)
+
             with open(self.init_status_file, 'w', encoding='utf-8') as f:
                 json.dump(self._init_status, f, indent=2, ensure_ascii=False)
-            logger.debug("初始化状态已保存")
+
+            logger.info(f"✅ 初始化状态已保存: {self.init_status_file}")
+            logger.debug(f"   - 文件大小: {self.init_status_file.stat().st_size} 字节")
+            logger.debug(f"   - 状态内容: {json.dumps(self._init_status, ensure_ascii=False)}")
+
         except Exception as e:
-            logger.error(f"保存初始化状态失败: {str(e)}", exc_info=True)
-    
-    def _should_reinitialize(self, domain: str, new_version: str) -> bool:
+            logger.error(f"❌ 保存初始化状态失败: {str(e)}", exc_info=True)
+            logger.error(f"   文件路径: {self.init_status_file}")
+            logger.error(f"   状态内容: {json.dumps(self._init_status, ensure_ascii=False)}")
+
+    def _should_reinitialize(self, domain: str) -> bool:
         """判断是否需要重新初始化.
         
         Args:
             domain: 领域名称
-            new_version: 新版本号
             
         Returns:
             是否需要重新初始化
         """
+        # 首先检查初始化状态文件是否存在
+        if not self.init_status_file.exists():
+            logger.info(f"🔍 检查领域 '{domain}' 的初始化状态:")
+            logger.info(f"   - 初始化状态文件不存在: {self.init_status_file}")
+            logger.info(f"✅ 决策: 领域 '{domain}' 需要初始化（文件不存在）")
+            return True
+
+        # 文件存在，检查该领域的初始化状态
         status = self._init_status.get(domain, {})
-        current_version = status.get("version")
-        item_count = status.get("item_count", 0)
-        chunk_count = status.get("chunk_count", 0)
-        
+
         logger.info(f"🔍 检查领域 '{domain}' 的初始化状态:")
-        logger.info(f"   - 当前版本: {current_version or '未初始化'}")
-        logger.info(f"   - 新版本: {new_version}")
-        logger.info(f"   - 现有条目数: {item_count}")
-        logger.info(f"   - 现有分块数: {chunk_count}")
-        
+        logger.info(f"   - 初始化状态文件: {self.init_status_file}")
+        logger.info(f"   - 当前状态: {status.get('initialized_at', '未初始化')}")
+
         # 如果从未初始化，需要初始化
-        if not current_version:
+        if not status.get("initialized_at"):
             logger.info(f"✅ 决策: 领域 '{domain}' 从未初始化，需要初始化")
             return True
-        
-        # 如果版本号发生变化，需要重新初始化
-        if current_version != new_version:
-            logger.info(
-                f"✅ 决策: 领域 '{domain}' 版本变化 ({current_version} -> {new_version})，需要重新初始化"
-            )
-            return True
-        
-        # 检查集合是否存在且包含数据
-        try:
-            collection = self.chroma_client.get_collection(f"knowledge_{domain}")
-            collection_count = collection.count()
-            
-            if collection_count == 0:
-                logger.info(f"✅ 决策: 领域 '{domain}' 集合为空，需要重新初始化")
-                return True
-            else:
-                logger.info(f"ℹ️  领域 '{domain}' 集合存在，包含 {collection_count} 个文档")
-        except Exception as e:
-            logger.warning(f"✅ 决策: 领域 '{domain}' 集合不存在或无法访问: {str(e)}，需要重新初始化")
-            return True
-        
-        logger.info(f"✅ 决策: 领域 '{domain}' 已初始化且版本未变化，跳过初始化")
+
+        # 已经初始化过，跳过初始化
+        logger.info(f"✅ 决策: 领域 '{domain}' 已初始化，跳过初始化")
         return False
-    
+        return False
+
     def _auto_initialize_builtin_knowledge(self) -> None:
         """自动初始化内置知识."""
         import time
         start_time = time.time()
-        
+
         logger.info("🚀 开始自动初始化内置知识库")
         logger.info("📊 检查内置知识模块可用性...")
-        
+
         # 初始化 RocketMQ 知识
         self._initialize_rocketmq_knowledge()
-        
+
         elapsed = time.time() - start_time
-        
+
         # 统计初始化结果
         rocketmq_status = self._init_status.get("rocketmq", {})
         rocketmq_items = rocketmq_status.get("item_count", 0)
         rocketmq_chunks = rocketmq_status.get("chunk_count", 0)
-        
+
         logger.info("✅ 内置知识库初始化完成:")
         logger.info(f"   - RocketMQ 知识条目: {rocketmq_items}")
         logger.info(f"   - RocketMQ 向量化分块: {rocketmq_chunks}")
         logger.info(f"   - 总耗时: {elapsed:.2f} 秒")
-        
+
         if rocketmq_items == 0:
             logger.warning("⚠️  RocketMQ 知识库为空，可能需要检查知识文件路径")
         else:
             logger.info("🎉 内置知识库已准备就绪，可以开始使用")
-    
+
     def _initialize_rocketmq_knowledge(self) -> None:
         """初始化 RocketMQ 知识，支持版本控制和向量化."""
         try:
             from .rocketmq_init import RocketMQKnowledgeInitializer, ROCKETMQ_KNOWLEDGE_VERSION
-            
+
             logger.info(f"🔍 检查 RocketMQ 知识库状态...")
+            logger.info(f"   - 初始化状态文件: {self.init_status_file}")
+            logger.info(f"   - 文件存在: {self.init_status_file.exists()}")
             logger.info(f"   - 当前版本: {ROCKETMQ_KNOWLEDGE_VERSION}")
-            
+
             # 检查是否需要重新初始化
-            needs_reinit = self._should_reinitialize("rocketmq", ROCKETMQ_KNOWLEDGE_VERSION)
-            
+            needs_reinit = self._should_reinitialize("rocketmq")
+
             if needs_reinit:
                 logger.info(f"🔄 需要重新初始化 RocketMQ 知识库")
-                
+
                 import time
                 start_time = time.time()
-                
-                logger.info(f"🚀 开始初始化 RocketMQ 知识库 (v{ROCKETMQ_KNOWLEDGE_VERSION})")
-                
+
+                logger.info(f"🚀 开始初始化 RocketMQ 知识库")
+
                 # 如果需要重新初始化，先清空现有集合
                 try:
                     self.chroma_client.delete_collection(f"knowledge_rocketmq")
                     logger.info("🗑️  已删除旧的 RocketMQ 集合")
                 except Exception:
                     logger.info("ℹ️  RocketMQ 集合不存在，无需删除")
-                
+
                 # 初始化 RocketMQ 知识
                 logger.info("📚 正在加载 RocketMQ 知识内容...")
                 initializer = RocketMQKnowledgeInitializer(self)
                 item_count, chunk_count = initializer.initialize()
-                
+
                 elapsed = time.time() - start_time
-                
+
                 # 更新初始化状态
                 self._init_status["rocketmq"] = {
-                    "version": ROCKETMQ_KNOWLEDGE_VERSION,
                     "initialized_at": datetime.now().isoformat(),
                     "item_count": item_count,
                     "chunk_count": chunk_count,
@@ -323,46 +323,47 @@ class ChromaKnowledgeStore:
                     "elapsed_seconds": round(elapsed, 2)
                 }
                 self._save_init_status()
-                
+
                 logger.info("✅ RocketMQ 知识库初始化完成:")
                 logger.info(f"   - 知识条目数: {item_count}")
                 logger.info(f"   - 向量化分块数: {chunk_count}")
-                logger.info(f"   - 版本: v{ROCKETMQ_KNOWLEDGE_VERSION}")
                 logger.info(f"   - 耗时: {elapsed:.2f} 秒")
-                
+                logger.info(f"   - 状态文件: {self.init_status_file}")
+
                 print(
                     f"✅ 初始化 {item_count} 个 RocketMQ 知识条目，"
-                    f"{chunk_count} 个文本块 (v{ROCKETMQ_KNOWLEDGE_VERSION})，"
+                    f"{chunk_count} 个文本块，"
                     f"耗时 {elapsed:.2f} 秒"
                 )
             else:
-                # 已经是最新版本，只更新检查时间
+                # 已经初始化，只更新检查时间
                 self._init_status["rocketmq"]["last_check"] = datetime.now().isoformat()
                 self._save_init_status()
-                
+
                 status = self._init_status.get("rocketmq", {})
                 item_count = status.get("item_count", 0)
                 chunk_count = status.get("chunk_count", 0)
-                
-                logger.info(f"✅ RocketMQ 知识库已是最新版本 (v{ROCKETMQ_KNOWLEDGE_VERSION})")
+
+                logger.info(f"✅ RocketMQ 知识库已初始化")
                 logger.info(f"   - 现有知识条目数: {item_count}")
                 logger.info(f"   - 现有向量化分块数: {chunk_count}")
-                
+                logger.info(f"   - 状态文件: {self.init_status_file}")
+
         except ImportError:
             logger.warning("⚠️  RocketMQ 知识模块不可用，跳过初始化")
         except Exception as e:
             logger.error(f"❌ 初始化 RocketMQ 知识失败: {str(e)}", exc_info=True)
             print(f"⚠️ 初始化 RocketMQ 知识失败: {e}")
-    
+
     def add_knowledge(
-        self, 
-        domain: str, 
-        category: str, 
-        title: str, 
-        content: str,
-        tags: List[str] = None, 
-        source: str = "user", 
-        priority: int = 1
+            self,
+            domain: str,
+            category: str,
+            title: str,
+            content: str,
+            tags: List[str] = None,
+            source: str = "user",
+            priority: int = 1
     ) -> str:
         """添加知识条目.
         
@@ -381,10 +382,10 @@ class ChromaKnowledgeStore:
         # 1. 创建 KnowledgeItem
         timestamp = datetime.now().strftime("%Y%m%d%H%M%S%f")
         item_id = f"{domain}_{timestamp}"
-        
+
         if tags is None:
             tags = []
-        
+
         # 准备元数据
         metadata = {
             "item_id": item_id,
@@ -397,15 +398,15 @@ class ChromaKnowledgeStore:
             "created_at": datetime.now().isoformat(),
             "updated_at": datetime.now().isoformat()
         }
-        
+
         try:
             # 2. 文本分块
             chunks = self.chunker.chunk_text(content, metadata)
-            
+
             if not chunks:
                 logger.warning(f"知识条目 {item_id} 分块后为空，跳过")
                 return item_id
-            
+
             # 3. 批量向量化
             chunk_texts = [chunk["text"] for chunk in chunks]
             try:
@@ -413,23 +414,23 @@ class ChromaKnowledgeStore:
             except Exception as e:
                 logger.error(f"知识条目 {item_id} 向量化失败: {str(e)}")
                 raise
-            
+
             # 4. 存储到 Chroma 集合
             collection = self._get_or_create_collection(domain)
-            
+
             # 准备批量插入的数据
             ids = []
             documents = []
             metadatas = []
             embeddings_list = []
-            
+
             for i, (chunk, embedding) in enumerate(zip(chunks, embeddings)):
                 chunk_id = f"{item_id}_chunk_{i}"
                 ids.append(chunk_id)
                 documents.append(chunk["text"])
                 metadatas.append(chunk["metadata"])
                 embeddings_list.append(embedding)
-            
+
             # 批量插入到 Chroma
             collection.add(
                 ids=ids,
@@ -437,27 +438,27 @@ class ChromaKnowledgeStore:
                 metadatas=metadatas,
                 embeddings=embeddings_list
             )
-            
+
             logger.info(
                 f"知识条目 {item_id} 已添加: {len(chunks)} 个分块"
             )
-            
+
             return item_id
-            
+
         except Exception as e:
             logger.error(
                 f"添加知识条目 {item_id} 失败: {str(e)}",
                 exc_info=True
             )
             raise
-    
+
     def search_knowledge(
-        self, 
-        query: str = None, 
-        domain: str = None,
-        category: str = None, 
-        tags: List[str] = None,
-        top_k: int = None
+            self,
+            query: str = None,
+            domain: str = None,
+            category: str = None,
+            tags: List[str] = None,
+            top_k: int = None
     ) -> List[KnowledgeItem]:
         """搜索知识条目.
 
@@ -471,13 +472,17 @@ class ChromaKnowledgeStore:
         Returns:
             知识条目列表，按相似度分数降序排列（语义检索）或按创建时间排序（元数据过滤）
         """
+        # 确保内置知识库已初始化（延迟初始化）
+        self._ensure_builtin_knowledge_initialized()
+
         # 使用配置的默认值或参数指定的值
         if top_k is None:
             top_k = self.config.top_k
 
         # 如果没有提供 query，使用基于元数据的过滤检索（需求 6.5）
         if not query:
-            logger.info(f"[KNOWLEDGE_STORE] 🔍 执行元数据过滤检索: domain={domain}, category={category}, tags={tags}, top_k={top_k}")
+            logger.info(
+                f"[KNOWLEDGE_STORE] 🔍 执行元数据过滤检索: domain={domain}, category={category}, tags={tags}, top_k={top_k}")
             return self._search_by_metadata(domain, category, tags, top_k)
 
         # 有 query 参数时，使用 RAG 语义检索（需求 6.4）
@@ -494,7 +499,8 @@ class ChromaKnowledgeStore:
             logger.info(f"[KNOWLEDGE_STORE] 🧮 开始向量化查询文本...")
             query_vector = self.embedder.embed_text(query)
             vectorize_time = (datetime.now() - start_time).total_seconds()
-            logger.info(f"[KNOWLEDGE_STORE] ✅ 查询向量化完成，耗时: {vectorize_time:.3f}秒，向量维度: {len(query_vector)}")
+            logger.info(
+                f"[KNOWLEDGE_STORE] ✅ 查询向量化完成，耗时: {vectorize_time:.3f}秒，向量维度: {len(query_vector)}")
 
             # 2. 构建元数据过滤条件
             where_filter = {}
@@ -536,7 +542,7 @@ class ChromaKnowledgeStore:
                 return []
 
             logger.info(f"[KNOWLEDGE_STORE] 📚 将在 {len(collections_to_search)} 个集合中搜索")
-            
+
             # 4. 在所有相关集合中执行相似度搜索
             all_results = []
             search_start = datetime.now()
@@ -581,7 +587,8 @@ class ChromaKnowledgeStore:
                     continue
 
             search_time = (datetime.now() - search_start).total_seconds()
-            logger.info(f"[KNOWLEDGE_STORE] 🔎 相似度搜索完成，耗时: {search_time:.3f}秒，找到 {len(all_results)} 个分块结果")
+            logger.info(
+                f"[KNOWLEDGE_STORE] 🔎 相似度搜索完成，耗时: {search_time:.3f}秒，找到 {len(all_results)} 个分块结果")
 
             # 5. 按相似度分数降序排序
             all_results.sort(key=lambda x: x["similarity_score"], reverse=True)
@@ -641,10 +648,10 @@ class ChromaKnowledgeStore:
             logger.info(f"[KNOWLEDGE_STORE] ✅ 语义检索完成:")
             logger.info(f"[KNOWLEDGE_STORE]   - 返回结果数: {len(knowledge_items)}")
             logger.info(f"[KNOWLEDGE_STORE]   - 总耗时: {total_time:.3f}秒")
-            
+
             # 记录前3个结果的标题和相似度
             for i, item in enumerate(knowledge_items[:3], 1):
-                score = all_results[i-1]["similarity_score"] if i-1 < len(all_results) else 0
+                score = all_results[i - 1]["similarity_score"] if i - 1 < len(all_results) else 0
                 logger.info(f"[KNOWLEDGE_STORE]   {i}. {item.title[:50]} (相似度: {score:.4f})")
 
             return knowledge_items
@@ -654,11 +661,11 @@ class ChromaKnowledgeStore:
             return []
 
     def _search_by_metadata(
-        self,
-        domain: str = None,
-        category: str = None,
-        tags: List[str] = None,
-        top_k: int = None
+            self,
+            domain: str = None,
+            category: str = None,
+            tags: List[str] = None,
+            top_k: int = None
     ) -> List[KnowledgeItem]:
         """基于元数据的过滤检索（不使用语义搜索）.
         
@@ -680,7 +687,7 @@ class ChromaKnowledgeStore:
                 where_filter["category"] = category
             if tags:
                 where_filter["tags"] = {"$in": tags}
-            
+
             # 确定要搜索的集合
             collections_to_search = []
             if domain:
@@ -706,14 +713,14 @@ class ChromaKnowledgeStore:
                 except Exception as e:
                     logger.error(f"列出集合失败: {str(e)}")
                     return []
-            
+
             if not collections_to_search:
                 logger.warning("没有可搜索的集合")
                 return []
-            
+
             # 在所有相关集合中执行元数据过滤
             all_results = []
-            
+
             for domain_name, collection in collections_to_search:
                 try:
                     # 使用 Chroma 的 get 方法进行元数据过滤
@@ -722,50 +729,50 @@ class ChromaKnowledgeStore:
                         limit=top_k if top_k else 1000,  # 设置一个合理的上限
                         include=["documents", "metadatas"]
                     )
-                    
+
                     # 处理查询结果
                     if results and results["ids"]:
                         for i in range(len(results["ids"])):
                             chunk_id = results["ids"][i]
                             document = results["documents"][i]
                             metadata = results["metadatas"][i]
-                            
+
                             all_results.append({
                                 "chunk_id": chunk_id,
                                 "document": document,
                                 "metadata": metadata,
                                 "domain": domain_name
                             })
-                
+
                 except Exception as e:
                     logger.warning(f"在领域 '{domain_name}' 中搜索失败: {str(e)}")
                     continue
-            
+
             logger.debug(f"元数据过滤完成，找到 {len(all_results)} 个结果")
-            
+
             # 按创建时间降序排序
             all_results.sort(
                 key=lambda x: x["metadata"].get("created_at", ""),
                 reverse=True
             )
-            
+
             # 限制返回结果数量
             if top_k:
                 all_results = all_results[:top_k]
-            
+
             # 重构为 KnowledgeItem 对象
             knowledge_items = []
             seen_item_ids = set()  # 用于去重（同一知识条目的不同分块）
-            
+
             for result in all_results:
                 metadata = result["metadata"]
                 item_id = metadata.get("item_id")
-                
+
                 # 如果已经添加过这个知识条目，跳过（避免重复）
                 if item_id in seen_item_ids:
                     continue
                 seen_item_ids.add(item_id)
-                
+
                 # 创建 KnowledgeItem
                 try:
                     knowledge_item = KnowledgeItem(
@@ -780,25 +787,25 @@ class ChromaKnowledgeStore:
                         source=metadata.get("source", "user"),
                         priority=metadata.get("priority", 1)
                     )
-                    
+
                     knowledge_items.append(knowledge_item)
-                    
+
                     logger.debug(
                         f"添加结果: id={item_id}, title={metadata.get('title', '')[:30]}"
                     )
-                
+
                 except Exception as e:
                     logger.warning(f"重构 KnowledgeItem 失败: {str(e)}")
                     continue
-            
+
             logger.info(f"元数据过滤检索完成: 返回 {len(knowledge_items)} 个结果")
-            
+
             return knowledge_items
-        
+
         except Exception as e:
             logger.error(f"元数据过滤检索失败: {str(e)}", exc_info=True)
             return []
-    
+
     def update_knowledge(self, item_id: str, **kwargs) -> bool:
         """更新知识条目.
         
@@ -815,13 +822,13 @@ class ChromaKnowledgeStore:
             是否更新成功
         """
         logger.info(f"开始更新知识条目: {item_id}")
-        
+
         try:
             # 1. 首先查找该知识条目所属的领域
             # 通过遍历所有集合查找包含该 item_id 的集合
             domain = None
             old_metadata = None
-            
+
             try:
                 all_collections = self.chroma_client.list_collections()
                 for coll_info in all_collections:
@@ -834,7 +841,7 @@ class ChromaKnowledgeStore:
                                 where={"item_id": item_id},
                                 limit=1
                             )
-                            
+
                             if results and results["ids"] and len(results["ids"]) > 0:
                                 domain = coll_name.replace("knowledge_", "")
                                 old_metadata = results["metadatas"][0]
@@ -846,39 +853,39 @@ class ChromaKnowledgeStore:
             except Exception as e:
                 logger.error(f"列出集合失败: {str(e)}")
                 return False
-            
+
             if not domain or not old_metadata:
                 logger.warning(f"知识条目 {item_id} 不存在")
                 return False
-            
+
             # 2. 删除旧的向量数据
             collection = self._get_or_create_collection(domain)
-            
+
             # 查找所有属于该 item_id 的分块
             old_chunks = collection.get(
                 where={"item_id": item_id}
             )
-            
+
             if old_chunks and old_chunks["ids"]:
                 chunk_ids = old_chunks["ids"]
                 collection.delete(ids=chunk_ids)
                 logger.info(f"删除了 {len(chunk_ids)} 个旧的向量分块")
             else:
                 logger.warning(f"未找到知识条目 {item_id} 的旧向量数据")
-            
+
             # 3. 准备更新后的元数据
             # 合并旧元数据和新的更新字段
             updated_metadata = old_metadata.copy()
-            
+
             # 允许更新的字段
             allowed_fields = ['title', 'content', 'tags', 'category', 'priority']
             for key, value in kwargs.items():
                 if key in allowed_fields:
                     updated_metadata[key] = value
-            
+
             # 更新时间戳
             updated_metadata["updated_at"] = datetime.now().isoformat()
-            
+
             # 4. 获取更新后的内容（如果没有提供新内容，使用旧内容）
             # 注意：旧的 content 不在 metadata 中，需要从 documents 中获取
             if "content" in kwargs:
@@ -891,7 +898,7 @@ class ChromaKnowledgeStore:
                 else:
                     logger.error(f"无法获取知识条目 {item_id} 的内容")
                     return False
-            
+
             # 5. 重新分块和向量化
             # 准备用于分块的元数据（不包含 chunk_index 和 total_chunks）
             chunk_metadata = {
@@ -905,14 +912,14 @@ class ChromaKnowledgeStore:
                 "created_at": updated_metadata.get("created_at", ""),
                 "updated_at": updated_metadata["updated_at"]
             }
-            
+
             # 文本分块
             chunks = self.chunker.chunk_text(new_content, chunk_metadata)
-            
+
             if not chunks:
                 logger.warning(f"知识条目 {item_id} 更新后分块为空")
                 return False
-            
+
             # 6. 批量向量化
             chunk_texts = [chunk["text"] for chunk in chunks]
             try:
@@ -920,21 +927,21 @@ class ChromaKnowledgeStore:
             except Exception as e:
                 logger.error(f"知识条目 {item_id} 重新向量化失败: {str(e)}")
                 raise
-            
+
             # 7. 存储新的向量数据
             # 准备批量插入的数据
             ids = []
             documents = []
             metadatas = []
             embeddings_list = []
-            
+
             for i, (chunk, embedding) in enumerate(zip(chunks, embeddings)):
                 chunk_id = f"{item_id}_chunk_{i}"
                 ids.append(chunk_id)
                 documents.append(chunk["text"])
                 metadatas.append(chunk["metadata"])
                 embeddings_list.append(embedding)
-            
+
             # 批量插入到 Chroma
             collection.add(
                 ids=ids,
@@ -942,20 +949,20 @@ class ChromaKnowledgeStore:
                 metadatas=metadatas,
                 embeddings=embeddings_list
             )
-            
+
             logger.info(
                 f"知识条目 {item_id} 更新成功: {len(chunks)} 个新分块"
             )
-            
+
             return True
-            
+
         except Exception as e:
             logger.error(
                 f"更新知识条目 {item_id} 失败: {str(e)}",
                 exc_info=True
             )
             return False
-    
+
     def delete_knowledge(self, item_id: str) -> bool:
         """删除知识条目.
 
@@ -1026,7 +1033,7 @@ class ChromaKnowledgeStore:
                 exc_info=True
             )
             return False
-    
+
     def get_domains(self) -> List[str]:
         """获取所有领域列表.
         
@@ -1036,7 +1043,7 @@ class ChromaKnowledgeStore:
         try:
             # 获取所有集合
             collections = self.chroma_client.list_collections()
-            
+
             # 从集合名称中提取领域名称
             # 集合名称格式: knowledge_{domain}
             domains = []
@@ -1044,12 +1051,12 @@ class ChromaKnowledgeStore:
                 if collection.name.startswith("knowledge_"):
                     domain = collection.name[len("knowledge_"):]
                     domains.append(domain)
-            
+
             return sorted(domains)
         except Exception as e:
             logger.error(f"获取领域列表失败: {str(e)}", exc_info=True)
             return []
-    
+
     def get_categories(self, domain: str = None) -> List[str]:
         """获取分类列表.
         
@@ -1061,12 +1068,12 @@ class ChromaKnowledgeStore:
         """
         try:
             categories = set()
-            
+
             if domain:
                 # 获取指定领域的分类
                 collection = self._get_or_create_collection(domain)
                 results = collection.get()
-                
+
                 if results and results["metadatas"]:
                     for metadata in results["metadatas"]:
                         if "category" in metadata:
@@ -1077,17 +1084,17 @@ class ChromaKnowledgeStore:
                 for d in domains:
                     collection = self._get_or_create_collection(d)
                     results = collection.get()
-                    
+
                     if results and results["metadatas"]:
                         for metadata in results["metadatas"]:
                             if "category" in metadata:
                                 categories.add(metadata["category"])
-            
+
             return sorted(list(categories))
         except Exception as e:
             logger.error(f"获取分类列表失败: {str(e)}", exc_info=True)
             return []
-    
+
     def get_tags(self, domain: str = None) -> List[str]:
         """获取标签列表.
         
@@ -1099,12 +1106,12 @@ class ChromaKnowledgeStore:
         """
         try:
             tags = set()
-            
+
             if domain:
                 # 获取指定领域的标签
                 collection = self._get_or_create_collection(domain)
                 results = collection.get()
-                
+
                 if results and results["metadatas"]:
                     for metadata in results["metadatas"]:
                         if "tags" in metadata and metadata["tags"]:
@@ -1119,7 +1126,7 @@ class ChromaKnowledgeStore:
                 for d in domains:
                     collection = self._get_or_create_collection(d)
                     results = collection.get()
-                    
+
                     if results and results["metadatas"]:
                         for metadata in results["metadatas"]:
                             if "tags" in metadata and metadata["tags"]:
@@ -1128,12 +1135,11 @@ class ChromaKnowledgeStore:
                                     tags.update(metadata["tags"])
                                 else:
                                     tags.add(metadata["tags"])
-            
+
             return sorted(list(tags))
         except Exception as e:
             logger.error(f"获取标签列表失败: {str(e)}", exc_info=True)
             return []
-
 
     def export_knowledge(self, domain: str = None) -> Dict[str, Any]:
         """导出知识为 JSON 格式.
@@ -1229,21 +1235,20 @@ class ChromaKnowledgeStore:
             }
 
 
-
 class DomainKnowledgeManager:
     """Specialized knowledge manager for specific domains."""
-    
+
     def __init__(self, knowledge_store: "ChromaKnowledgeStore", domain: str):
         self.store = knowledge_store
         self.domain = domain
-    
+
     def add_troubleshooting_guide(self, title: str, content: str, tags: List[str] = None) -> str:
         """Add a troubleshooting guide for the domain."""
         if tags is None:
             tags = ["troubleshooting"]
         else:
             tags.append("troubleshooting")
-        
+
         return self.store.add_knowledge(
             domain=self.domain,
             category="troubleshooting",
@@ -1252,14 +1257,14 @@ class DomainKnowledgeManager:
             tags=tags,
             priority=3
         )
-    
+
     def add_configuration_guide(self, title: str, content: str, tags: List[str] = None) -> str:
         """Add a configuration guide for the domain."""
         if tags is None:
             tags = ["configuration"]
         else:
             tags.append("configuration")
-        
+
         return self.store.add_knowledge(
             domain=self.domain,
             category="configuration",
@@ -1268,14 +1273,14 @@ class DomainKnowledgeManager:
             tags=tags,
             priority=2
         )
-    
+
     def add_best_practice(self, title: str, content: str, tags: List[str] = None) -> str:
         """Add a best practice for the domain."""
         if tags is None:
             tags = ["best_practices"]
         else:
             tags.append("best_practices")
-        
+
         return self.store.add_knowledge(
             domain=self.domain,
             category="best_practices",
@@ -1284,15 +1289,15 @@ class DomainKnowledgeManager:
             tags=tags,
             priority=4
         )
-    
-    def add_checker_info(self, checker_name: str, description: str, usage: str, 
-                        admin_api: str = None, tags: List[str] = None) -> str:
+
+    def add_checker_info(self, checker_name: str, description: str, usage: str,
+                         admin_api: str = None, tags: List[str] = None) -> str:
         """Add checker information for the domain."""
         if tags is None:
             tags = ["checker", "diagnostic"]
         else:
             tags.extend(["checker", "diagnostic"])
-        
+
         content = f"""## {checker_name}
 
 **描述**: {description}
@@ -1300,10 +1305,10 @@ class DomainKnowledgeManager:
 **使用场景**: {usage}
 
 """
-        
+
         if admin_api:
             content += f"**Admin API**: {admin_api}\n\n"
-        
+
         return self.store.add_knowledge(
             domain=self.domain,
             category="diagnostic_tools",
@@ -1312,7 +1317,7 @@ class DomainKnowledgeManager:
             tags=tags,
             priority=3
         )
-    
+
     def search_troubleshooting(self, query: str = None, tags: List[str] = None) -> List[KnowledgeItem]:
         """Search troubleshooting guides for the domain."""
         return self.store.search_knowledge(
@@ -1321,7 +1326,7 @@ class DomainKnowledgeManager:
             category="troubleshooting",
             tags=tags
         )
-    
+
     def search_configuration(self, query: str = None, tags: List[str] = None) -> List[KnowledgeItem]:
         """Search configuration guides for the domain."""
         return self.store.search_knowledge(
@@ -1330,7 +1335,7 @@ class DomainKnowledgeManager:
             category="configuration",
             tags=tags
         )
-    
+
     def search_checkers(self, query: str = None) -> List[KnowledgeItem]:
         """Search diagnostic checkers for the domain."""
         return self.store.search_knowledge(
@@ -1339,18 +1344,18 @@ class DomainKnowledgeManager:
             category="diagnostic_tools",
             tags=["checker"]
         )
-    
+
     def get_all_checkers(self) -> List[KnowledgeItem]:
         """Get all diagnostic checkers for the domain."""
         return self.search_checkers()
-    
+
     def get_common_issues(self) -> List[KnowledgeItem]:
         """Get common issues for the domain."""
         return self.store.search_knowledge(
             domain=self.domain,
             tags=["common", "issue"]
         )
-    
+
     def export_domain_knowledge(self) -> Dict[str, Any]:
         """Export all knowledge for the domain."""
         return self.store.export_knowledge(domain=self.domain)

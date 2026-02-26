@@ -170,9 +170,9 @@ class EmailChannel(BaseChannel):
         timeout = 30
         if self.config.smtp_use_ssl:
             with smtplib.SMTP_SSL(
-                self.config.smtp_host,
-                self.config.smtp_port,
-                timeout=timeout,
+                    self.config.smtp_host,
+                    self.config.smtp_port,
+                    timeout=timeout,
             ) as smtp:
                 smtp.login(self.config.smtp_username, self.config.smtp_password)
                 smtp.send_message(msg)
@@ -194,10 +194,10 @@ class EmailChannel(BaseChannel):
         )
 
     def fetch_messages_between_dates(
-        self,
-        start_date: date,
-        end_date: date,
-        limit: int = 20,
+            self,
+            start_date: date,
+            end_date: date,
+            limit: int = 20,
     ) -> list[dict[str, Any]]:
         """
         Fetch messages in [start_date, end_date) by IMAP date search.
@@ -220,11 +220,11 @@ class EmailChannel(BaseChannel):
         )
 
     def _fetch_messages(
-        self,
-        search_criteria: tuple[str, ...],
-        mark_seen: bool,
-        dedupe: bool,
-        limit: int,
+            self,
+            search_criteria: tuple[str, ...],
+            mark_seen: bool,
+            dedupe: bool,
+            limit: int,
     ) -> list[dict[str, Any]]:
         """Fetch messages by arbitrary IMAP search criteria."""
         messages: list[dict[str, Any]] = []

@@ -1,6 +1,7 @@
 """Web interface for nanobot."""
 
 from pathlib import Path
+
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse
 from loguru import logger
@@ -10,11 +11,11 @@ def diagnose_knowledge_base(workspace_path: Path) -> dict:
     """诊断知识库状态."""
     try:
         from nanobot.knowledge.store import ChromaKnowledgeStore
-        
+
         # 检查知识库目录
         knowledge_dir = workspace_path / "knowledge"
         chroma_dir = knowledge_dir / "chroma_db"
-        
+
         status = {
             "available": False,
             "knowledge_dir_exists": knowledge_dir.exists(),
@@ -23,20 +24,20 @@ def diagnose_knowledge_base(workspace_path: Path) -> dict:
             "total_documents": 0,
             "error": None
         }
-        
+
         if not knowledge_dir.exists():
             status["error"] = "知识库目录不存在"
             return status
-            
+
         # 尝试初始化ChromaKnowledgeStore
         try:
             store = ChromaKnowledgeStore(workspace_path)
             status["available"] = True
-            
+
             # 获取集合信息
-            collections = store.client.list_collections()
+            collections = store.chroma_client.list_collections()
             status["total_collections"] = len(collections)
-            
+
             # 计算总文档数
             total_docs = 0
             for collection in collections:
@@ -46,10 +47,10 @@ def diagnose_knowledge_base(workspace_path: Path) -> dict:
                 except:
                     pass
             status["total_documents"] = total_docs
-            
+
         except Exception as e:
             status["error"] = f"ChromaKnowledgeStore初始化失败: {str(e)}"
-            
+
     except ImportError as e:
         status = {
             "available": False,
@@ -57,11 +58,12 @@ def diagnose_knowledge_base(workspace_path: Path) -> dict:
         }
     except Exception as e:
         status = {
-            "available": False, 
+            "available": False,
             "error": f"知识库诊断失败: {str(e)}"
         }
-    
+
     return status
+
 
 from nanobot.cli.commands import webui
 
@@ -108,7 +110,7 @@ def initialize_webui_resources():
     from nanobot.bus.queue import MessageBus
     from nanobot.agent.loop import AgentLoop
     from nanobot.providers.litellm_provider import LiteLLMProvider
-    
+
     config = load_config()
     bus = MessageBus()
 
@@ -134,11 +136,11 @@ def initialize_webui_resources():
         exec_config=config.tools.exec,
         restrict_to_workspace=config.tools.restrict_to_workspace,
     )
-    
+
     # 诊断知识库状态
     knowledge_status = diagnose_knowledge_base(config.workspace_path)
     logger.info(f"[WEB] 📚 知识库状态: {knowledge_status}")
-    
+
     return True
 
 
@@ -278,7 +280,7 @@ async def process_user_message_streaming(user_input: str, websocket: WebSocket):
             message_data['tool_result'] = context_info.get('tool_result', '')
             message_data['tool_error'] = context_info.get('tool_error', '')
             message_data['tool_args'] = context_info.get('tool_args')
-        
+
         # 如果是知识库查询，添加知识库相关信息
         if content_type == 'knowledge':
             message_data['knowledge_status'] = context_info.get('knowledge_status', '')

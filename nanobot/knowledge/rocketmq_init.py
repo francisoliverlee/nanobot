@@ -5,9 +5,9 @@ This module provides built-in RocketMQ knowledge that will be automatically load
 when the knowledge system is initialized.
 """
 
-import re
 import glob
 import os
+import re
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Any
@@ -96,15 +96,13 @@ def parse_markdown_file(file_path: Path) -> Dict[str, Any]:
 def get_knowledge_categories(base_path: Path, knowledge_dir) -> Dict[str, List[Dict]]:
     """Organize knowledge files by category based on directory structure."""
 
-    knowledge_file_pattern = os.path.join(str(knowledge_dir), "**", "*.md")
+    knowledge_file_pattern = os.path.join(os.path.expanduser(str(knowledge_dir)), "**", "*.md")
 
     logger.info(f"📂 扫描知识文件目录...")
     logger.info(f"   - 基础路径: {base_path}")
     logger.info(f"   - 知识目录: {knowledge_dir}")
     logger.info(f"   - 知识文件格式: {knowledge_file_pattern}")
     logger.info(f"   - 目录存在: {knowledge_dir.exists()}")
-
-
 
     if not knowledge_dir.exists():
         logger.warning("⚠️  知识目录不存在，返回空字典")
@@ -117,16 +115,22 @@ def get_knowledge_categories(base_path: Path, knowledge_dir) -> Dict[str, List[D
     logger.info(f"🔍 开始递归扫描知识目录及其所有子目录...")
 
     # 使用 glob 递归查找所有 Markdown 文件
-    md_files = list(glob.glob(knowledge_file_pattern, recursive=True)) + list(glob.glob(knowledge_file_pattern, recursive=True))
+    md_files = list(glob.glob(knowledge_file_pattern, recursive=True))
     logger.info(f"📄 找到 {len(md_files)} 个 Markdown 文件")
 
     # 按目录结构分类文件
     file_groups = {}
     for md_file in md_files:
-        file_path = knowledge_dir / md_file
+        file_path = Path(md_file)
         logger.debug(f"🔍 处理文件: {file_path}")
 
-        category_name = md_file.split('/')[0]
+        # 获取相对于知识目录的相对路径来确定分类
+        try:
+            relative_path = file_path.relative_to(Path(os.path.expanduser(str(knowledge_dir))))
+            category_name = str(relative_path).split('/')[0]
+        except ValueError:
+            # 如果文件不在知识目录下，使用文件名作为分类
+            category_name = file_path.stem
 
         if category_name not in file_groups:
             file_groups[category_name] = []
@@ -170,7 +174,7 @@ def get_knowledge_categories(base_path: Path, knowledge_dir) -> Dict[str, List[D
     # 如果没有找到任何文件，记录警告
     if total_files == 0:
         logger.warning("⚠️  未找到任何有效的知识文件")
-        logger.warning(f"   - 扫描路径: {knowledge_dir.absolute()}")
+        logger.warning(f"   - 扫描路径: {Path(os.path.expanduser(str(knowledge_dir)))}")
         logger.warning(f"   - 支持的文件类型: *.md, *.MD")
 
     return categories
@@ -203,8 +207,32 @@ class RocketMQKnowledgeInitializer:
         else:
             self.base_path = Path.cwd()
 
-    def initialize(self):
-        """Initialize built-in RocketMQ knowledge from file system.
+        # 初始化标记文件路径
+        self.init_marker_file = self.base_path / ".rocketmq_init_marker"
+
+    def _is_already_initialized(self) -> bool:
+        """检查 RocketMQ 知识库是否已经初始化过.
+        
+        Returns:
+            bool: 如果已经初始化过返回 True，否则返回 False
+        """
+
+        # 使用 store 中的统一初始化状态检查机制
+        if hasattr(self.store, '_should_reinitialize'):
+            needs_reinit = self.store._should_reinitialize("rocketmq")
+            if not needs_reinit:
+                logger.info("✅ RocketMQ 知识库已经初始化过，跳过重复初始化")
+                return True
+            else:
+                logger.info("🔍 RocketMQ 知识库需要重新初始化")
+                return False
+        else:
+            # 如果 store 没有统一状态检查机制，使用默认逻辑
+            logger.warning("⚠️  store 没有统一初始化状态检查机制，使用默认逻辑")
+            return False
+
+    def force_reinitialize(self):
+        """强制重新初始化 RocketMQ 知识库.
         
         Returns:
             如果是 ChromaKnowledgeStore: (item_count, chunk_count)
@@ -212,6 +240,30 @@ class RocketMQKnowledgeInitializer:
         """
         import logging
         logger = logging.getLogger("nanobot.knowledge.rocketmq_init")
+
+        logger.warning("🔄 强制重新初始化 RocketMQ 知识库")
+
+        # 强制重新初始化 RocketMQ 知识库
+        if hasattr(self.store, '_init_status') and 'rocketmq' in self.store._init_status:
+            del self.store._init_status['rocketmq']
+            self.store._save_init_status()
+            logger.info("🗑️ 已清除 RocketMQ 知识库的初始化状态")
+
+        # 执行初始化
+        return self.initialize()
+
+    def initialize(self):
+        """Initialize built-in RocketMQ knowledge from file system.
+        
+        Returns:
+            如果是 ChromaKnowledgeStore: (item_count, chunk_count)
+            如果是其他存储类型: item_count
+        """
+
+        # 检查是否已经初始化过
+        if self._is_already_initialized():
+            logger.info("🚀 RocketMQ 知识库已经初始化，跳过本次初始化")
+            return (0, 0) if self.is_chroma_store else 0
 
         logger.info(f"🚀 开始初始化 RocketMQ 知识库")
         logger.info(f"   - 存储类型: ChromaKnowledgeStore (向量化)")
@@ -224,12 +276,13 @@ class RocketMQKnowledgeInitializer:
         logger.info("📂 正在加载知识文件...")
         categories = get_knowledge_categories(self.base_path, self.store.knowledge_dir)
 
-
         logger.info(
-                f"✅ 找到 {len(categories)} 个知识类别，共 {sum(len(items) for items in categories.values())} 个知识条目")
-            # Initialize from file system
+            f"✅ 找到 {len(categories)} 个知识类别，共 {sum(len(items) for items in categories.values())} 个知识条目")
+        # Initialize from file system
         self._initialize_from_filesystem(categories)
-            
+
+        # 初始化状态由 store 统一管理，无需单独创建标记文件
+        logger.info("✅ RocketMQ 知识库初始化状态已由 store 统一管理")
 
         logger.info(f"🎉 RocketMQ 知识库初始化完成:")
         logger.info(f"📊 初始化结果统计:")
