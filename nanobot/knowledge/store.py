@@ -102,21 +102,9 @@ class ChromaKnowledgeStore:
         self._init_status: Dict[str, Any] = {}
         self._load_init_status()
 
-        # 延迟初始化内置知识（在需要时再初始化）
-        self._builtin_knowledge_initialized = False
-
         elapsed = time.time() - start_time
         logger.info(f"✅ RAG 知识库Chroma初始化完成，总耗时: {elapsed:.2f} 秒")
         logger.info("📚 内置知识库将在首次使用时自动初始化")
-
-    def _ensure_builtin_knowledge_initialized(self) -> None:
-        """确保内置知识库已初始化（延迟初始化）."""
-        if not self._builtin_knowledge_initialized:
-            logger.info("🚀 开始延迟初始化内置知识库...")
-            # 只设置初始化标记，不实际执行初始化
-            # RocketMQ 知识库将在需要时由 RocketMQKnowledgeInitializer 单独初始化
-            self._builtin_knowledge_initialized = True
-            logger.info("✅ 内置知识库延迟初始化完成（仅设置标记，实际初始化由各知识库模块负责）")
 
     def _init_chroma(self) -> None:
         """初始化 Chroma 客户端.
@@ -190,7 +178,8 @@ class ChromaKnowledgeStore:
             try:
                 with open(self.init_status_file, 'r', encoding='utf-8') as f:
                     self._init_status = json.load(f)
-                logger.info(f"✅ 初始化状态文件加载成功: {self.init_status_file}")
+                logger.info(
+                    f"✅ 初始化状态文件加载成功: {self.init_status_file}. 内容: {json.dumps(self._init_status, ensure_ascii=False, indent=2)}")
                 logger.debug(f"   - 文件内容: {json.dumps(self._init_status, ensure_ascii=False)}")
             except (json.JSONDecodeError, KeyError) as e:
                 logger.warning(f"⚠️ 初始化状态文件加载失败: {str(e)}")
@@ -209,9 +198,7 @@ class ChromaKnowledgeStore:
             with open(self.init_status_file, 'w', encoding='utf-8') as f:
                 json.dump(self._init_status, f, indent=2, ensure_ascii=False)
 
-            logger.info(f"✅ 初始化状态已保存: {self.init_status_file}")
-            logger.debug(f"   - 文件大小: {self.init_status_file.stat().st_size} 字节")
-            logger.debug(f"   - 状态内容: {json.dumps(self._init_status, ensure_ascii=False)}")
+            logger.info(f"✅ 初始化状态已保存: {self.init_status_file}, 内容：{json.dumps(self._init_status, ensure_ascii=False, indent=2)}")
 
         except Exception as e:
             logger.error(f"❌ 保存初始化状态失败: {str(e)}", exc_info=True)
@@ -472,8 +459,6 @@ class ChromaKnowledgeStore:
         Returns:
             知识条目列表，按相似度分数降序排列（语义检索）或按创建时间排序（元数据过滤）
         """
-        # 确保内置知识库已初始化（延迟初始化）
-        self._ensure_builtin_knowledge_initialized()
 
         # 使用配置的默认值或参数指定的值
         if top_k is None:

@@ -301,10 +301,14 @@ class RocketMQKnowledgeInitializer:
         else:
             logger.info("✅ 知识库初始化成功，可以开始使用知识搜索功能")
 
+        self.store._save_init_status()
+
         if self.is_chroma_store:
             return self.initialized_count, self.chunk_count
         else:
             return self.initialized_count
+
+
 
     def _increment_count(self) -> None:
         """Increment the initialization counter."""
