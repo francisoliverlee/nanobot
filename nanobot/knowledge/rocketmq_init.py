@@ -301,6 +301,18 @@ class RocketMQKnowledgeInitializer:
         else:
             logger.info("✅ 知识库初始化成功，可以开始使用知识搜索功能")
 
+        # 更新 store 的初始化状态
+        if hasattr(self.store, '_init_status'):
+            self.store._init_status["rocketmq"] = {
+                "initialized_at": datetime.now().isoformat(),
+                "item_count": self.initialized_count,
+                "chunk_count": self.chunk_count if self.is_chroma_store else 0,
+                "last_check": datetime.now().isoformat(),
+            }
+            logger.info("✅ 已更新 store 的初始化状态")
+            logger.info(f"   - item_count: {self.initialized_count}")
+            logger.info(f"   - chunk_count: {self.chunk_count if self.is_chroma_store else 0}")
+
         self.store._save_init_status()
 
         if self.is_chroma_store:
@@ -397,9 +409,6 @@ class RocketMQKnowledgeInitializer:
             tags: 标签列表
         """
         from datetime import datetime
-        import logging
-
-        logger = logging.getLogger("nanobot.knowledge.rocketmq_init")
 
         # 生成唯一 ID
         timestamp = datetime.now().strftime("%Y%m%d%H%M%S%f")
