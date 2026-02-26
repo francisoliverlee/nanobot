@@ -85,7 +85,7 @@ class ChromaKnowledgeStore:
         self.chroma_dir = ensure_dir(self.knowledge_dir / "chroma_db")
         self.init_status_file = self.knowledge_dir / "init_status.json"
         
-        logger.info("🏗️  开始初始化 RAG 知识库系统")
+        logger.info("🏗️  开始初始化 RAG 知识库 Chroma")
         logger.info(f"   - 工作空间: {workspace}")
         logger.info(f"   - 知识库目录: {self.knowledge_dir}")
         logger.info(f"   - Chroma 数据库: {self.chroma_dir}")
@@ -111,7 +111,7 @@ class ChromaKnowledgeStore:
         self._auto_initialize_builtin_knowledge()
         
         elapsed = time.time() - start_time
-        logger.info(f"✅ RAG 知识库系统初始化完成，总耗时: {elapsed:.2f} 秒")
+        logger.info(f"✅ RAG 知识库Chroma初始化完成，总耗时: {elapsed:.2f} 秒")
     
     def _init_chroma(self) -> None:
         """初始化 Chroma 客户端.

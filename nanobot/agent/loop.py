@@ -886,28 +886,60 @@ class AgentLoop:
             知识库查询结果，如果没有相关结果则返回None
         """
         from loguru import logger
+        import asyncio
         
         # 如果用户输入太短，不进行知识库查询
         if len(user_input.strip()) < 5:
             logger.info("[KNOWLEDGE] 📝 用户输入太短，跳过知识库查询")
             return None
         
+        # 发送知识库查询开始的流式回调
+        if hasattr(self, 'stream_callback') and self.stream_callback:
+            await self._send_stream_callback({
+                "content": "🔍 正在查询知识库...",
+                "is_knowledge_query": True,
+                "knowledge_status": "start",
+                "knowledge_query": user_input[:100]
+            })
+        
         # 自动推断知识库查询的domain和query
         domain, query = self._infer_knowledge_query(user_input)
         
         if not domain or not query:
             logger.info("[KNOWLEDGE] 📝 无法推断知识库查询参数，跳过查询")
+            if hasattr(self, 'stream_callback') and self.stream_callback:
+                await self._send_stream_callback({
+                    "content": "⚠️ 无法确定查询领域，跳过知识库查询",
+                    "is_knowledge_query": True,
+                    "knowledge_status": "skipped"
+                })
             return None
         
         logger.info(f"[KNOWLEDGE] 🔍 开始知识库查询:")
         logger.info(f"[KNOWLEDGE]   - Domain: {domain}")
         logger.info(f"[KNOWLEDGE]   - Query: {query}")
         
+        # 发送查询参数的流式回调
+        if hasattr(self, 'stream_callback') and self.stream_callback:
+            await self._send_stream_callback({
+                "content": f"📚 查询领域: {domain}\n🔎 查询关键词: {query}",
+                "is_knowledge_query": True,
+                "knowledge_status": "searching",
+                "knowledge_domain": domain,
+                "knowledge_query": query
+            })
+        
         try:
             # 使用KnowledgeSearchTool执行查询
             knowledge_tool = self.tools.get("knowledge_search")
             if not knowledge_tool:
                 logger.warning("[KNOWLEDGE] ⚠️ KnowledgeSearchTool未注册，跳过查询")
+                if hasattr(self, 'stream_callback') and self.stream_callback:
+                    await self._send_stream_callback({
+                        "content": "⚠️ 知识库工具未注册",
+                        "is_knowledge_query": True,
+                        "knowledge_status": "error"
+                    })
                 return None
             
             # 执行知识库查询
@@ -919,10 +951,30 @@ class AgentLoop:
             
             if "No knowledge found" in result or "Error" in result:
                 logger.info(f"[KNOWLEDGE] ⚠️ 知识库查询无结果: {result[:100]}...")
+                if hasattr(self, 'stream_callback') and self.stream_callback:
+                    await self._send_stream_callback({
+                        "content": "📭 未找到相关知识",
+                        "is_knowledge_query": True,
+                        "knowledge_status": "no_results"
+                    })
                 return None
             
             logger.info(f"[KNOWLEDGE] ✅ 知识库查询成功，返回{len(result)}字符的结果")
-            logger.info(f"[KNOWLEDGE] ✅ 知识库查询成功，{result}")
+            
+            # 解析结果数量
+            import re
+            result_count_match = re.search(r'Found (\d+) knowledge items', result)
+            result_count = int(result_count_match.group(1)) if result_count_match else 0
+            
+            # 发送查询成功的流式回调
+            if hasattr(self, 'stream_callback') and self.stream_callback:
+                await self._send_stream_callback({
+                    "content": f"✅ 找到 {result_count} 条相关知识",
+                    "is_knowledge_query": True,
+                    "knowledge_status": "success",
+                    "knowledge_count": result_count,
+                    "knowledge_result": result[:500] + "..." if len(result) > 500 else result
+                })
             
             # 格式化查询结果作为上下文
             knowledge_context = f"""
@@ -940,7 +992,22 @@ class AgentLoop:
             
         except Exception as e:
             logger.error(f"[KNOWLEDGE] ❌ 知识库查询失败: {str(e)}")
+            if hasattr(self, 'stream_callback') and self.stream_callback:
+                await self._send_stream_callback({
+                    "content": f"❌ 知识库查询失败: {str(e)}",
+                    "is_knowledge_query": True,
+                    "knowledge_status": "error"
+                })
             return None
+    
+    async def _send_stream_callback(self, context_info: dict):
+        """发送流式回调信息的辅助方法."""
+        if hasattr(self, 'stream_callback') and self.stream_callback:
+            import asyncio
+            if asyncio.iscoroutinefunction(self.stream_callback):
+                await self.stream_callback(context_info)
+            else:
+                self.stream_callback(context_info)
     
     def _infer_knowledge_query(self, user_input: str) -> tuple[str | None, str | None]:
         """

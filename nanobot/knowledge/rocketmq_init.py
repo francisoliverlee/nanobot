@@ -6,6 +6,8 @@ when the knowledge system is initialized.
 """
 
 import re
+import glob
+import os
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Any
@@ -27,7 +29,7 @@ def get_rocketmq_content_files(base_path: Path) -> List[Path]:
     # Find all markdown files in knowledge directory
     md_files = []
     for pattern in ["**/*.md", "**/*.MD"]:
-        md_files.extend(knowledge_dir.glob(pattern))
+        md_files.extend(glob.glob(pattern, recursive=True))
 
     return md_files
 
@@ -91,14 +93,18 @@ def parse_markdown_file(file_path: Path) -> Dict[str, Any]:
         return {}
 
 
-def get_knowledge_categories(base_path: Path) -> Dict[str, List[Dict]]:
+def get_knowledge_categories(base_path: Path, knowledge_dir) -> Dict[str, List[Dict]]:
     """Organize knowledge files by category based on directory structure."""
 
-    knowledge_dir = base_path / "knowledge"
+    knowledge_file_pattern = os.path.join(str(knowledge_dir), "**", "*.md")
+
     logger.info(f"📂 扫描知识文件目录...")
     logger.info(f"   - 基础路径: {base_path}")
     logger.info(f"   - 知识目录: {knowledge_dir}")
+    logger.info(f"   - 知识文件格式: {knowledge_file_pattern}")
     logger.info(f"   - 目录存在: {knowledge_dir.exists()}")
+
+
 
     if not knowledge_dir.exists():
         logger.warning("⚠️  知识目录不存在，返回空字典")
@@ -111,36 +117,21 @@ def get_knowledge_categories(base_path: Path) -> Dict[str, List[Dict]]:
     logger.info(f"🔍 开始递归扫描知识目录及其所有子目录...")
 
     # 使用 glob 递归查找所有 Markdown 文件
-    md_files = list(knowledge_dir.glob("**/*.md")) + list(knowledge_dir.glob("**/*.MD"))
+    md_files = list(glob.glob(knowledge_file_pattern, recursive=True)) + list(glob.glob(knowledge_file_pattern, recursive=True))
     logger.info(f"📄 找到 {len(md_files)} 个 Markdown 文件")
 
     # 按目录结构分类文件
     file_groups = {}
     for md_file in md_files:
-        # 获取相对于知识目录的相对路径
-        relative_path = md_file.relative_to(knowledge_dir)
+        file_path = knowledge_dir / md_file
+        logger.debug(f"🔍 处理文件: {file_path}")
 
-        # 提取分类信息：使用父目录名作为分类，如果有多层目录则使用最后两级
-        parts = list(relative_path.parent.parts)
-
-        if len(parts) >= 2:
-            # 如果有日期目录和分类目录，使用分类目录名
-            category_name = parts[-1]  # 最后一级目录名
-        elif len(parts) == 1:
-            # 如果只有一级目录，使用该目录名
-            category_name = parts[0]
-        else:
-            # 如果在根目录，使用 "general"
-            category_name = "general"
-
-        # 跳过以 _ 开头的目录（元数据目录）
-        if category_name.startswith('_'):
-            logger.debug(f"   - 跳过元数据目录: {category_name}")
-            continue
+        category_name = md_file.split('/')[0]
 
         if category_name not in file_groups:
             file_groups[category_name] = []
-        file_groups[category_name].append(md_file)
+        file_groups[category_name].append(file_path)
+        logger.debug(f"   - 文件已分类到: {category_name}")
 
     logger.info(f"📂 按目录结构分类: {len(file_groups)} 个分类")
     logger.info(f"   - 分类列表: {list(file_groups.keys())}")
@@ -231,17 +222,14 @@ class RocketMQKnowledgeInitializer:
 
         # Load knowledge from file system
         logger.info("📂 正在加载知识文件...")
-        categories = get_knowledge_categories(self.base_path)
+        categories = get_knowledge_categories(self.base_path, self.store.knowledge_dir)
 
-        if not categories:
-            logger.warning("⚠️  未找到知识文件，使用内置知识作为备选")
-            # Fallback to embedded knowledge if no files found
-            self._initialize_embedded_knowledge()
-        else:
-            logger.info(
+
+        logger.info(
                 f"✅ 找到 {len(categories)} 个知识类别，共 {sum(len(items) for items in categories.values())} 个知识条目")
             # Initialize from file system
-            self._initialize_from_filesystem(categories)
+        self._initialize_from_filesystem(categories)
+            
 
         logger.info(f"🎉 RocketMQ 知识库初始化完成:")
         logger.info(f"📊 初始化结果统计:")
@@ -467,32 +455,6 @@ class RocketMQKnowledgeInitializer:
             return "best_practice"
 
         return "troubleshooting"  # Default type
-
-    def _initialize_embedded_knowledge(self) -> None:
-        """Fallback to embedded knowledge if no files found."""
-        # Add basic troubleshooting guide as fallback
-        title = "RocketMQ知识库初始化"
-        content = "RocketMQ知识库已从文件系统加载。如果未找到知识文件，请检查knowledge目录结构。"
-        tags = ["初始化", "RocketMQ", "知识库"]
-
-        if self.is_chroma_store:
-            self._add_knowledge_with_vectorization(
-                knowledge_type="troubleshooting",
-                title=title,
-                content=content,
-                tags=tags
-            )
-        else:
-            self.manager.add_troubleshooting_guide(
-                title=title,
-                content=content,
-                tags=tags
-            )
-
-        self._increment_count()
-
-    # 硬编码的知识内容已被移除，改为从文件系统读取knowledge目录中的知识文件
-    # 知识文件应按照目录结构组织，系统会自动分类和加载
 
 
 def initialize_rocketmq_knowledge(workspace: Path) -> int | tuple[int, int]:

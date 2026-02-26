@@ -1,9 +1,67 @@
 """Web interface for nanobot."""
 
-import os
 from pathlib import Path
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse
+from loguru import logger
+
+
+def diagnose_knowledge_base(workspace_path: Path) -> dict:
+    """诊断知识库状态."""
+    try:
+        from nanobot.knowledge.store import ChromaKnowledgeStore
+        
+        # 检查知识库目录
+        knowledge_dir = workspace_path / "knowledge"
+        chroma_dir = knowledge_dir / "chroma_db"
+        
+        status = {
+            "available": False,
+            "knowledge_dir_exists": knowledge_dir.exists(),
+            "chroma_dir_exists": chroma_dir.exists(),
+            "total_collections": 0,
+            "total_documents": 0,
+            "error": None
+        }
+        
+        if not knowledge_dir.exists():
+            status["error"] = "知识库目录不存在"
+            return status
+            
+        # 尝试初始化ChromaKnowledgeStore
+        try:
+            store = ChromaKnowledgeStore(workspace_path)
+            status["available"] = True
+            
+            # 获取集合信息
+            collections = store.client.list_collections()
+            status["total_collections"] = len(collections)
+            
+            # 计算总文档数
+            total_docs = 0
+            for collection in collections:
+                try:
+                    count = collection.count()
+                    total_docs += count
+                except:
+                    pass
+            status["total_documents"] = total_docs
+            
+        except Exception as e:
+            status["error"] = f"ChromaKnowledgeStore初始化失败: {str(e)}"
+            
+    except ImportError as e:
+        status = {
+            "available": False,
+            "error": f"知识库模块导入失败: {str(e)}"
+        }
+    except Exception as e:
+        status = {
+            "available": False, 
+            "error": f"知识库诊断失败: {str(e)}"
+        }
+    
+    return status
 
 from nanobot.cli.commands import webui
 
@@ -37,6 +95,51 @@ web_app = FastAPI(
 
 # Create connection manager instance
 manager = ConnectionManager()
+
+# Global instances for provider and agent_loop
+provider = None
+agent_loop = None
+
+
+def initialize_webui_resources():
+    """Initialize resources for webui."""
+    global provider, agent_loop
+    from nanobot.config.loader import load_config
+    from nanobot.bus.queue import MessageBus
+    from nanobot.agent.loop import AgentLoop
+    from nanobot.providers.litellm_provider import LiteLLMProvider
+    
+    config = load_config()
+    bus = MessageBus()
+
+    # Create provider from config
+    p = config.get_provider()
+    model = config.agents.defaults.model
+    if not (p and p.api_key) and not model.startswith("bedrock/"):
+        return False
+
+    provider = LiteLLMProvider(
+        api_key=p.api_key if p else None,
+        api_base=config.get_api_base(),
+        default_model=model,
+        extra_headers=p.extra_headers if p else None,
+        provider_name=config.get_provider_name(),
+    )
+
+    agent_loop = AgentLoop(
+        bus=bus,
+        provider=provider,
+        workspace=config.workspace_path,
+        brave_api_key=config.tools.web.search.api_key or None,
+        exec_config=config.tools.exec,
+        restrict_to_workspace=config.tools.restrict_to_workspace,
+    )
+    
+    # 诊断知识库状态
+    knowledge_status = diagnose_knowledge_base(config.workspace_path)
+    logger.info(f"[WEB] 📚 知识库状态: {knowledge_status}")
+    
+    return True
 
 
 def load_html_template(template_name: str) -> str:
@@ -75,42 +178,16 @@ async def process_user_message_streaming(user_input: str, websocket: WebSocket):
     """Process user message with real-time streaming output."""
     import time
     import json
-    from nanobot.config.loader import load_config
-    from nanobot.bus.queue import MessageBus
-    from nanobot.agent.loop import AgentLoop
 
     start_time = time.time()
 
-    config = load_config()
-    bus = MessageBus()
-
-    # Create provider from config
-    from nanobot.providers.litellm_provider import LiteLLMProvider
-    p = config.get_provider()
-    model = config.agents.defaults.model
-    if not (p and p.api_key) and not model.startswith("bedrock/"):
-        await websocket.send_text("Error: No API key configured. Please set one in ~/.nanobot/config.json")
+    # Check if provider and agent_loop are initialized
+    if not provider or not agent_loop:
+        await websocket.send_text("Error: Web UI resources not initialized. Please restart the server.")
         return
 
-    provider = LiteLLMProvider(
-        api_key=p.api_key if p else None,
-        api_base=config.get_api_base(),
-        default_model=model,
-        extra_headers=p.extra_headers if p else None,
-        provider_name=config.get_provider_name(),
-    )
-
-    agent_loop = AgentLoop(
-        bus=bus,
-        provider=provider,
-        workspace=config.workspace_path,
-        brave_api_key=config.tools.web.search.api_key or None,
-        exec_config=config.tools.exec,
-        restrict_to_workspace=config.tools.restrict_to_workspace,
-    )
-
     # Send initial processing message
-    await websocket.send_text("🤖 AI Agent is processing your request...\\n\\n")
+    await websocket.send_text("🤖 AI Agent is processing your request...\n\n")
 
     # Record LLM start time
     llm_start_time = time.time()
@@ -133,6 +210,8 @@ async def process_user_message_streaming(user_input: str, websocket: WebSocket):
             content_type = 'tool'
         elif context_info.get('is_iteration_start', False):
             content_type = 'iteration'
+        elif context_info.get('is_knowledge_query', False):
+            content_type = 'knowledge'
 
         # 计算从开始处理到当前回调的耗时
         current_duration = round(callback_time - start_time, 3)
@@ -143,18 +222,36 @@ async def process_user_message_streaming(user_input: str, websocket: WebSocket):
         # 为不同类型的内容添加适当的标记，避免重复信息
         if content_type == 'iteration':
             # 迭代开始信息
-            enhanced_content = f"🔄 第{iteration_count}次迭代开始\\n"
+            enhanced_content = f"🔄 第{iteration_count}次迭代开始\n"
         elif content_type == 'tool':
             # 工具执行信息 - 只添加状态标记，不重复添加耗时信息
             tool_status = context_info.get('tool_status', '')
             if tool_status == 'start':
-                enhanced_content = f"🔧 开始执行工具\\n{content}"
+                enhanced_content = f"🔧 开始执行工具\n{content}"
             elif tool_status == 'completed':
-                enhanced_content = f"✅ 工具执行完成\\n{content}"
+                enhanced_content = f"✅ 工具执行完成\n{content}"
             elif tool_status == 'error':
-                enhanced_content = f"❌ 工具执行失败\\n{content}"
+                enhanced_content = f"❌ 工具执行失败\n{content}"
             else:
-                enhanced_content = f"🔧 工具执行\\n{content}"
+                enhanced_content = f"🔧 工具执行\n{content}"
+        elif content_type == 'knowledge':
+            # 知识库查询信息
+            knowledge_status = context_info.get('knowledge_status', '')
+            if knowledge_status == 'start':
+                enhanced_content = f"📚 {content}"
+            elif knowledge_status == 'searching':
+                enhanced_content = f"🔍 {content}"
+            elif knowledge_status == 'success':
+                knowledge_count = context_info.get('knowledge_count', 0)
+                enhanced_content = f"✅ {content}"
+            elif knowledge_status == 'no_results':
+                enhanced_content = f"📭 {content}"
+            elif knowledge_status == 'error':
+                enhanced_content = f"❌ {content}"
+            elif knowledge_status == 'skipped':
+                enhanced_content = f"⚠️ {content}"
+            else:
+                enhanced_content = f"📚 {content}"
         else:
             # 其他类型内容 - 直接使用原始内容，不添加额外信息
             enhanced_content = content
@@ -181,6 +278,14 @@ async def process_user_message_streaming(user_input: str, websocket: WebSocket):
             message_data['tool_result'] = context_info.get('tool_result', '')
             message_data['tool_error'] = context_info.get('tool_error', '')
             message_data['tool_args'] = context_info.get('tool_args')
+        
+        # 如果是知识库查询，添加知识库相关信息
+        if content_type == 'knowledge':
+            message_data['knowledge_status'] = context_info.get('knowledge_status', '')
+            message_data['knowledge_domain'] = context_info.get('knowledge_domain', '')
+            message_data['knowledge_query'] = context_info.get('knowledge_query', '')
+            message_data['knowledge_count'] = context_info.get('knowledge_count', 0)
+            message_data['knowledge_result'] = context_info.get('knowledge_result', '')
 
         await websocket.send_text(json.dumps(message_data, ensure_ascii=False))
 
@@ -198,7 +303,7 @@ async def process_user_message_streaming(user_input: str, websocket: WebSocket):
     if response and response.strip():
         # 检查是否已经通过流式输出发送了内容
         # 如果没有流式输出，则发送完整响应
-        await websocket.send_text("\\n" + response)
+        await websocket.send_text("\n" + response)
     elif not response:
         await websocket.send_text("No response from agent.")
 
@@ -206,44 +311,18 @@ async def process_user_message_streaming(user_input: str, websocket: WebSocket):
     total_processing_time = round(end_time - start_time, 1)
 
     # Send processing times
-    await websocket.send_text(f"\\n---\\n*总耗时: {total_processing_time}秒 | LLM执行耗时: {llm_execution_time}秒*")
+    await websocket.send_text(f"\n---\n*总耗时: {total_processing_time}秒 | LLM执行耗时: {llm_execution_time}秒*")
 
 
 async def process_user_message(user_input: str) -> str:
     """Process user message using nanobot's AgentLoop."""
     import time
-    from nanobot.config.loader import load_config
-    from nanobot.bus.queue import MessageBus
-    from nanobot.agent.loop import AgentLoop
 
     start_time = time.time()
 
-    config = load_config()
-    bus = MessageBus()
-
-    # Create provider from config
-    from nanobot.providers.litellm_provider import LiteLLMProvider
-    p = config.get_provider()
-    model = config.agents.defaults.model
-    if not (p and p.api_key) and not model.startswith("bedrock/"):
-        return "Error: No API key configured. Please set one in ~/.nanobot/config.json"
-
-    provider = LiteLLMProvider(
-        api_key=p.api_key if p else None,
-        api_base=config.get_api_base(),
-        default_model=model,
-        extra_headers=p.extra_headers if p else None,
-        provider_name=config.get_provider_name(),
-    )
-
-    agent_loop = AgentLoop(
-        bus=bus,
-        provider=provider,
-        workspace=config.workspace_path,
-        brave_api_key=config.tools.web.search.api_key or None,
-        exec_config=config.tools.exec,
-        restrict_to_workspace=config.tools.restrict_to_workspace,
-    )
+    # Check if provider and agent_loop are initialized
+    if not provider or not agent_loop:
+        return "Error: Web UI resources not initialized. Please restart the server."
 
     # Record LLM start time
     llm_start_time = time.time()
@@ -258,9 +337,9 @@ async def process_user_message(user_input: str) -> str:
     total_processing_time = round(end_time - start_time, 1)
 
     if response:
-        return f"{response}\\n\\n---\\n*总耗时: {total_processing_time}秒 | LLM执行耗时: {llm_execution_time}秒*"
+        return f"{response}\n\n---\n*总耗时: {total_processing_time}秒 | LLM执行耗时: {llm_execution_time}秒*"
     else:
-        return f"No response from agent.\\n\\n---\\n*总耗时: {total_processing_time}秒 | LLM执行耗时: {llm_execution_time}秒*"
+        return f"No response from agent.\n\n---\n*总耗时: {total_processing_time}秒 | LLM执行耗时: {llm_execution_time}秒*"
 
 
 if __name__ == "__main__":
