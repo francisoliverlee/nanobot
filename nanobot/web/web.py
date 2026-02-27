@@ -498,35 +498,45 @@ async def process_user_message_streaming(user_input: str, websocket: WebSocket):
 ---
 """
         
-        # 构建预览项目数组
+        # 构建预览项目数组（去重逻辑：相同文件只显示一个预览按钮）
         preview_items = []
+        seen_files = set()  # 用于去重
         
-        # 添加文件路径预览项
+        # 优先级1：文件路径预览（如果有本地文件路径）
         if hasattr(top_item, 'file_path') and top_item.file_path:
-            preview_items.append({
-                'type': 'file',
-                'id': top_item.file_path,
-                'label': '📁 预览文件内容',
-                'path': top_item.file_path
-            })
+            file_key = top_item.file_path
+            if file_key not in seen_files:
+                preview_items.append({
+                    'type': 'file',
+                    'id': top_item.file_path,
+                    'label': '📁 预览文件内容',
+                    'path': top_item.file_path
+                })
+                seen_files.add(file_key)
         
-        # 添加文档链接预览项
-        if hasattr(top_item, 'source_url') and top_item.source_url:
-            preview_items.append({
-                'type': 'url',
-                'id': top_item.source_url,
-                'label': '📄 预览文档链接',
-                'url': top_item.source_url
-            })
+        # 优先级2：文档链接预览（如果没有本地文件路径，但有URL）
+        elif hasattr(top_item, 'source_url') and top_item.source_url:
+            url_key = top_item.source_url
+            if url_key not in seen_files:
+                preview_items.append({
+                    'type': 'url',
+                    'id': top_item.source_url,
+                    'label': '📄 预览文档链接',
+                    'url': top_item.source_url
+                })
+                seen_files.add(url_key)
         
-        # 添加完整内容预览项
-        if hasattr(top_item, 'id') and top_item.id and hasattr(top_item, 'preview_available') and top_item.preview_available:
-            preview_items.append({
-                'type': 'item',
-                'id': top_item.id,
-                'label': '🔍 预览完整内容',
-                'item_id': top_item.id
-            })
+        # 优先级3：知识条目内容预览（如果既没有文件路径也没有URL，但可预览）
+        elif hasattr(top_item, 'id') and top_item.id and hasattr(top_item, 'preview_available') and top_item.preview_available:
+            item_key = f"item_{top_item.id}"
+            if item_key not in seen_files:
+                preview_items.append({
+                    'type': 'item',
+                    'id': top_item.id,
+                    'label': '🔍 预览完整内容',
+                    'item_id': top_item.id
+                })
+                seen_files.add(item_key)
         
         # 通过JSON格式发送知识库结果，这样前端可以解析预览信息
         import json
