@@ -8,14 +8,30 @@ This script demonstrates how to use the knowledge base system to store and retri
 import json
 from pathlib import Path
 from nanobot.knowledge.store import ChromaKnowledgeStore, DomainKnowledgeManager
+from nanobot.knowledge.rag_config import RAGConfig
+from nanobot.config.loader import load_config
 
 
 def main():
     """Demo the RocketMQ knowledge base functionality."""
     
-    # Initialize knowledge store
+    # Initialize knowledge store with proper configuration
     workspace = Path("workspace")
-    store = ChromaKnowledgeStore(workspace)
+    
+    # 创建 RAGConfig 并从配置文件加载 rerank 设置
+    rag_config = RAGConfig.from_env()
+    
+    # 如果环境变量中没有rerank配置，尝试从config.json加载
+    try:
+        config = load_config()
+        if config.rerank.model_path:
+            rag_config.rerank_model_path = config.rerank.model_path
+        if config.rerank.threshold > 0:
+            rag_config.rerank_threshold = config.rerank.threshold
+    except Exception:
+        pass  # 使用默认配置
+    
+    store = ChromaKnowledgeStore(workspace, rag_config)
     rocketmq_manager = DomainKnowledgeManager(store, "rocketmq")
     
     print("=== RocketMQ Knowledge Base Demo ===\n")

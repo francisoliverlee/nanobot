@@ -27,6 +27,10 @@ class RAGConfig:
     # Performance configuration
     batch_size: int = 32
     timeout: int = 5
+    
+    # Rerank configuration
+    rerank_model_path: str = ""
+    rerank_threshold: float = 0.8
 
     @classmethod
     def from_env(cls) -> "RAGConfig":
@@ -40,6 +44,8 @@ class RAGConfig:
         - NANOBOT_SIMILARITY_THRESHOLD: Minimum similarity score threshold
         - NANOBOT_BATCH_SIZE: Batch size for vectorization
         - NANOBOT_TIMEOUT: Timeout in seconds for operations
+        - NANOBOT_RERANK_MODEL_PATH: Path to rerank model
+        - NANOBOT_RERANK_THRESHOLD: Rerank threshold (0.0-1.0)
         
         Returns:
             RAGConfig instance with values from environment or defaults
@@ -89,6 +95,16 @@ class RAGConfig:
             except ValueError:
                 pass  # Use default
 
+        # Load rerank configuration
+        if rerank_model_path := os.getenv("NANOBOT_RERANK_MODEL_PATH"):
+            config.rerank_model_path = rerank_model_path
+
+        if rerank_threshold := os.getenv("NANOBOT_RERANK_THRESHOLD"):
+            try:
+                config.rerank_threshold = float(rerank_threshold)
+            except ValueError:
+                pass  # Use default
+
         return config
 
     def validate(self) -> bool:
@@ -119,6 +135,10 @@ class RAGConfig:
 
         # Validate timeout
         if self.timeout <= 0:
+            return False
+
+        # Validate rerank threshold
+        if self.rerank_threshold < 0.0 or self.rerank_threshold > 1.0:
             return False
 
         return True

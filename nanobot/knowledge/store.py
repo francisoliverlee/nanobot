@@ -10,6 +10,16 @@ import chromadb
 from chromadb.config import Settings
 from loguru import logger
 
+# 添加CrossEncoder相关导入
+try:
+    from sentence_transformers import CrossEncoder
+    import torch
+
+    CROSS_ENCODER_AVAILABLE = True
+except ImportError as e:
+    CROSS_ENCODER_AVAILABLE = False
+    logger.warning(f"sentence_transformers 库未安装，CrossEncoder 重排序功能将不可用: {e}")
+
 from nanobot.utils.helpers import ensure_dir
 from .rag_config import RAGConfig
 from .text_chunker import TextChunker
@@ -63,14 +73,15 @@ class ChromaKnowledgeStore:
 
     def __init__(self, workspace: Path, config: Optional[RAGConfig] = None):
         """初始化知识库.
-        
+
         Args:
             workspace: 工作空间路径
             config: RAG 配置
-            
+
         Raises:
             ChromaConnectionError: Chroma 数据库连接失败时抛出
             EmbeddingModelError: Embedding 模型加载失败时抛出
+            RuntimeError: CrossEncoder 模型初始化失败时抛出
         """
         import time
         start_time = time.time()
@@ -102,13 +113,17 @@ class ChromaKnowledgeStore:
         self._init_status: Dict[str, Any] = {}
         self._load_init_status()
 
+        # 初始化CrossEncoder重排序模型
+        self.cross_encoder = None
+        self._init_cross_encoder()
+
         elapsed = time.time() - start_time
         logger.info(f"✅ RAG 知识库Chroma初始化完成，总耗时: {elapsed:.2f} 秒")
         logger.info("📚 内置知识库将在首次使用时自动初始化")
 
     def _init_chroma(self) -> None:
         """初始化 Chroma 客户端.
-        
+
         Raises:
             ChromaConnectionError: Chroma 数据库连接失败时抛出
         """
@@ -128,13 +143,13 @@ class ChromaKnowledgeStore:
 
     def _get_or_create_collection(self, domain: str):
         """获取或创建 Chroma 集合.
-        
+
         Args:
             domain: 领域名称
-            
+
         Returns:
             Chroma 集合对象
-            
+
         Raises:
             ChromaConnectionError: 集合创建失败时抛出
         """
@@ -189,6 +204,108 @@ class ChromaKnowledgeStore:
             logger.info("   创建新的初始化状态")
             self._init_status = {}
 
+    def _init_cross_encoder(self) -> None:
+        """初始化CrossEncoder重排序模型."""
+        if not CROSS_ENCODER_AVAILABLE:
+            logger.warning("⚠️  CrossEncoder 不可用，跳过初始化")
+            return
+
+        # 从RAGConfig中获取重排序模型路径
+        model_path = self.config.rerank_model_path
+
+        # 如果没有配置模型路径，跳过初始化
+        if not model_path:
+            logger.error("ℹ️  未配置 CrossEncoder 模型路径，跳过重排序功能")
+            raise FileNotFoundError(f"CrossEncoder 未配置模型路径 {model_path}")
+
+        try:
+            logger.info("🔧 初始化 CrossEncoder 重排序模型...")
+            logger.info(f"   - 模型: 本地模型")
+            logger.info(f"   - 路径: {model_path}")
+
+            # 检查模型文件是否存在
+            from pathlib import Path
+            if not Path(model_path).exists():
+                raise FileNotFoundError(f"CrossEncoder 模型文件不存在: {model_path}")
+
+            # 加载本地模型
+            self.cross_encoder = CrossEncoder(
+                model_path,
+                device="cuda" if torch.cuda.is_available() else "cpu",
+                max_length=512
+            )
+
+            logger.info("✅ CrossEncoder 模型初始化成功")
+            logger.info(f"   - 设备: {'CUDA' if torch.cuda.is_available() else 'CPU'}")
+
+        except Exception as e:
+            error_msg = f"❌ CrossEncoder 模型初始化失败: {str(e)}"
+            logger.error(error_msg)
+            logger.error(f"   - 模型路径: {model_path}")
+            logger.error(f"   - 错误类型: {type(e).__name__}")
+
+            # 抛出异常，终止服务启动
+            raise RuntimeError(f"CrossEncoder 模型初始化失败，服务启动终止: {str(e)}") from e
+
+    def _rerank_results(self, query: str, results: List[Dict]) -> List[Dict]:
+        """使用CrossEncoder对搜索结果进行重排序.
+
+        Args:
+            query: 查询文本
+            results: 原始搜索结果列表
+
+        Returns:
+            重排序后的结果列表，包含rerank_score字段
+        """
+        if not self.cross_encoder or not results:
+            return results
+
+        try:
+            logger.info("🔍 开始使用 CrossEncoder 进行重排序...")
+            start_time = datetime.now()
+
+            # 准备重排序的输入对
+            pairs = [(query, result['document']) for result in results]
+
+            # 获取重排序分数
+            scores = self.cross_encoder.predict(pairs)
+
+            # 将分数缩放到0-100范围
+            min_score = min(scores)
+            max_score = max(scores)
+            if max_score > min_score:
+                scaled_scores = [(score - min_score) / (max_score - min_score) * 100 for score in scores]
+            else:
+                scaled_scores = [50.0 for _ in scores]
+
+            # 从RAGConfig中获取重排序权重
+            rerank_threshold = getattr(self.config, 'rerank_threshold', 0.8)
+
+            # 更新结果列表
+            for i, score in enumerate(scaled_scores):
+                original_score = results[i].get('similarity_score', 0)
+                # 计算加权分数
+                weighted_score = (score * rerank_threshold) + (original_score * 100 * (1 - rerank_threshold))
+                results[i]['rerank_score'] = weighted_score
+                results[i]['original_score'] = original_score
+
+            # 按重排序分数降序排序
+            results.sort(key=lambda x: x['rerank_score'], reverse=True)
+
+            elapsed = (datetime.now() - start_time).total_seconds()
+            logger.info(f"✅ 重排序完成，耗时: {elapsed:.3f}秒")
+            logger.info(f"   - 重排序结果数: {len(results)}")
+
+            # 记录前3个结果的得分
+            for i, result in enumerate(results[:3], 1):
+                logger.info(
+                    f"   {i}. {result['metadata'].get('title', '')[:50]} (重排序得分: {result['rerank_score']:.2f}, 原始得分: {result['original_score']:.4f})")
+
+            return results
+        except Exception as e:
+            logger.error(f"❌ 重排序失败: {str(e)}")
+            return results
+
     def _save_init_status(self) -> None:
         """保存初始化状态到文件."""
         try:
@@ -198,7 +315,8 @@ class ChromaKnowledgeStore:
             with open(self.init_status_file, 'w', encoding='utf-8') as f:
                 json.dump(self._init_status, f, indent=2, ensure_ascii=False)
 
-            logger.info(f"✅ 初始化状态已保存: {self.init_status_file}, 内容：{json.dumps(self._init_status, ensure_ascii=False, indent=2)}")
+            logger.info(
+                f"✅ 初始化状态已保存: {self.init_status_file}, 内容：{json.dumps(self._init_status, ensure_ascii=False, indent=2)}")
 
         except Exception as e:
             logger.error(f"❌ 保存初始化状态失败: {str(e)}", exc_info=True)
@@ -207,10 +325,10 @@ class ChromaKnowledgeStore:
 
     def _should_reinitialize(self, domain: str) -> bool:
         """判断是否需要重新初始化.
-        
+
         Args:
             domain: 领域名称
-            
+
         Returns:
             是否需要重新初始化
         """
@@ -353,7 +471,7 @@ class ChromaKnowledgeStore:
             priority: int = 1
     ) -> str:
         """添加知识条目.
-        
+
         Args:
             domain: 领域
             category: 分类
@@ -362,7 +480,7 @@ class ChromaKnowledgeStore:
             tags: 标签列表
             source: 来源
             priority: 优先级
-            
+
         Returns:
             知识条目 ID
         """
@@ -445,7 +563,8 @@ class ChromaKnowledgeStore:
             domain: str = None,
             category: str = None,
             tags: List[str] = None,
-            top_k: int = None
+            top_k: int = None,
+            return_scores: bool = False
     ) -> List[KnowledgeItem]:
         """搜索知识条目.
 
@@ -455,9 +574,11 @@ class ChromaKnowledgeStore:
             category: 分类过滤
             tags: 标签过滤
             top_k: 返回结果数量
+            return_scores: 是否返回包含得分的结果
 
         Returns:
             知识条目列表，按相似度分数降序排列（语义检索）或按创建时间排序（元数据过滤）
+            如果 return_scores 为 True，则返回 (知识条目列表, 得分列表) 的元组
         """
 
         # 使用配置的默认值或参数指定的值
@@ -581,11 +702,14 @@ class ChromaKnowledgeStore:
             # 6. 限制返回结果数量
             all_results = all_results[:top_k]
 
-            # 7. 重构为 KnowledgeItem 对象
+            # 8. 使用CrossEncoder进行重排序
+            reranked_results = self._rerank_results(query, all_results)
+
+            # 9. 重构为 KnowledgeItem 对象
             knowledge_items = []
             seen_item_ids = set()  # 用于去重（同一知识条目的不同分块）
 
-            for result in all_results:
+            for result in reranked_results:
                 metadata = result["metadata"]
                 item_id = metadata.get("item_id")
 
@@ -609,20 +733,22 @@ class ChromaKnowledgeStore:
                         priority=metadata.get("priority", 1)
                     )
 
-                    # 添加相似度分数（作为额外属性）
+                    # 添加相似度分数和重排序分数（作为额外属性）
                     # 注意：KnowledgeItem 是 dataclass，我们需要动态添加属性
                     knowledge_item_dict = knowledge_item.to_dict()
-                    knowledge_item_dict["similarity_score"] = result["similarity_score"]
+                    knowledge_item_dict["similarity_score"] = result.get("similarity_score", 0)
+                    knowledge_item_dict["rerank_score"] = result.get("rerank_score", 0)
                     knowledge_item_dict["chunk_index"] = metadata.get("chunk_index", 0)
 
                     # 重新创建带有额外字段的对象
                     # 由于 KnowledgeItem 不支持额外字段，我们直接返回原对象
-                    # 并在日志中记录相似度分数
+                    # 并在日志中记录分数
                     knowledge_items.append(knowledge_item)
 
                     logger.debug(
                         f"添加结果: id={item_id}, title={metadata.get('title', '')[:30]}, "
-                        f"similarity={result['similarity_score']:.4f}"
+                        f"similarity={result.get('similarity_score', 0):.4f}, "
+                        f"rerank_score={result.get('rerank_score', 0):.2f}"
                     )
 
                 except Exception as e:
@@ -634,12 +760,25 @@ class ChromaKnowledgeStore:
             logger.info(f"[KNOWLEDGE_STORE]   - 返回结果数: {len(knowledge_items)}")
             logger.info(f"[KNOWLEDGE_STORE]   - 总耗时: {total_time:.3f}秒")
 
-            # 记录前3个结果的标题和相似度
+            # 记录前3个结果的标题和分数
             for i, item in enumerate(knowledge_items[:3], 1):
-                score = all_results[i - 1]["similarity_score"] if i - 1 < len(all_results) else 0
-                logger.info(f"[KNOWLEDGE_STORE]   {i}. {item.title[:50]} (相似度: {score:.4f})")
+                result = reranked_results[i - 1] if i - 1 < len(reranked_results) else {}
+                similarity_score = result.get("similarity_score", 0)
+                rerank_score = result.get("rerank_score", 0)
+                logger.info(
+                    f"[KNOWLEDGE_STORE]   {i}. {item.title[:50]} (相似度: {similarity_score:.4f}, 重排序得分: {rerank_score:.2f})")
 
-            return knowledge_items
+            if return_scores:
+                # 构建得分列表
+                scores = []
+                for result in reranked_results:
+                    scores.append({
+                        "similarity_score": result.get("similarity_score", 0),
+                        "rerank_score": result.get("rerank_score", 0)
+                    })
+                return knowledge_items, scores
+            else:
+                return knowledge_items
 
         except Exception as e:
             logger.error(f"语义检索失败: {str(e)}", exc_info=True)

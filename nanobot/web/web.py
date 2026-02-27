@@ -6,6 +6,8 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse
 from loguru import logger
 
+from nanobot.config import load_config
+
 
 def diagnose_knowledge_base(workspace_path: Path) -> dict:
     """诊断知识库状态."""
@@ -31,7 +33,17 @@ def diagnose_knowledge_base(workspace_path: Path) -> dict:
 
         # 尝试初始化ChromaKnowledgeStore
         try:
-            store = ChromaKnowledgeStore(workspace_path)
+            from nanobot.knowledge.rag_config import RAGConfig
+
+            # 先查询知识库
+            config = load_config()
+            rag_config = RAGConfig.from_env()
+            if config.rerank.model_path:
+                rag_config.rerank_model_path = config.rerank.model_path
+            if config.rerank.threshold > 0:
+                rag_config.rerank_threshold = config.rerank.threshold
+
+            store = ChromaKnowledgeStore(workspace_path, rag_config)
             status["available"] = True
 
             # 获取集合信息
@@ -180,6 +192,8 @@ async def process_user_message_streaming(user_input: str, websocket: WebSocket):
     """Process user message with real-time streaming output."""
     import time
     import json
+    from nanobot.config.loader import load_config
+    from nanobot.knowledge.store import ChromaKnowledgeStore
 
     start_time = time.time()
 
@@ -190,6 +204,82 @@ async def process_user_message_streaming(user_input: str, websocket: WebSocket):
 
     # Send initial processing message
     await websocket.send_text("🤖 AI Agent is processing your request...\n\n")
+
+    try:
+        # 先查询知识库
+        config = load_config()
+        
+        # 创建 RAGConfig 并从配置文件加载 rerank 设置
+        from nanobot.knowledge.rag_config import RAGConfig
+        rag_config = RAGConfig.from_env()
+        
+        # 从配置文件中加载 rerank 配置
+        if config.rerank.model_path:
+            rag_config.rerank_model_path = config.rerank.model_path
+        if config.rerank.threshold > 0:
+            rag_config.rerank_threshold = config.rerank.threshold
+            
+        store = ChromaKnowledgeStore(config.workspace_path, rag_config)
+    except RuntimeError as e:
+        # CrossEncoder 初始化失败
+        error_msg = f"❌ 知识库初始化失败: {str(e)}\n\n服务启动终止，请检查 CrossEncoder 模型配置。\n"
+        await websocket.send_text(error_msg)
+        # 关闭WebSocket连接
+        await websocket.close(code=1011, reason="CrossEncoder initialization failed")
+        return
+    except Exception as e:
+        # 其他初始化错误
+        error_msg = f"❌ 知识库初始化失败: {str(e)}\n\n"
+        await websocket.send_text(error_msg)
+        return
+
+    # 发送知识库查询开始信息
+    await websocket.send_text("📚 正在查询知识库...\n")
+
+    # 搜索知识库，返回得分
+    search_result = store.search_knowledge(query=user_input, return_scores=True)
+
+    # 检查返回值类型
+    if isinstance(search_result, tuple) and len(search_result) == 2:
+        knowledge_results, scores = search_result
+    else:
+        knowledge_results = search_result
+        scores = []
+
+    # 检查是否有结果且重排序得分超过70
+    if knowledge_results and scores:
+        # 获取重排序得分最高的结果
+        top_score = scores[0].get('rerank_score', 0)
+
+        await websocket.send_text(f"✅ 知识库查询完成，找到 {len(knowledge_results)} 个结果\n")
+        await websocket.send_text(f"📊 最高重排序得分: {top_score:.2f}\n\n")
+
+        # 发送知识库结果
+        await websocket.send_text("📋 知识库查询结果：\n")
+        for i, (item, score) in enumerate(zip(knowledge_results[:3], scores[:3]), 1):
+            await websocket.send_text(f"{i}. {item.title} (得分: {score.get('rerank_score', 0):.2f})\n")
+            await websocket.send_text(f"   内容: {item.content[:100]}...\n\n")
+
+        # 从配置中获取重排序阈值
+        rerank_threshold = config.rerank.threshold if config.rerank.threshold > 0 else 80
+
+        # 检查重排序得分是否超过阈值
+        if top_score >= rerank_threshold:
+            await websocket.send_text(f"🚀 重排序得分超过{rerank_threshold}，直接输出知识库结果\n\n")
+            # 直接输出知识库结果
+            await websocket.send_text("📚 知识库答案：\n")
+            await websocket.send_text(f"{knowledge_results[0].content}\n\n")
+
+            # 发送处理时间
+            end_time = time.time()
+            total_processing_time = round(end_time - start_time, 1)
+            await websocket.send_text(f"\n---\n*总耗时: {total_processing_time}秒*\n")
+            return
+        else:
+            # 得分低于阈值，继续原始逻辑，让LLM处理
+            await websocket.send_text(f"🤖 重排序得分低于{rerank_threshold}，让AI分析知识库结果...\n\n")
+    else:
+        await websocket.send_text("📭 知识库中没有找到相关结果\n\n")
 
     # Record LLM start time
     llm_start_time = time.time()

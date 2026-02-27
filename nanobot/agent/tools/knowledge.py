@@ -10,6 +10,24 @@ from nanobot.config.loader import load_config
 from nanobot.knowledge.store import DomainKnowledgeManager
 
 
+def _create_chroma_store_with_config(workspace: Path):
+    """创建带有正确配置的 ChromaKnowledgeStore 实例."""
+    from nanobot.knowledge.store import ChromaKnowledgeStore
+    from nanobot.knowledge.rag_config import RAGConfig
+    
+    # 加载配置
+    config = load_config()
+    rag_config = RAGConfig.from_env()
+    
+    # 从配置文件中加载 rerank 配置
+    if config.rerank.model_path:
+        rag_config.rerank_model_path = config.rerank.model_path
+    if config.rerank.threshold > 0:
+        rag_config.rerank_threshold = config.rerank.threshold
+    
+    return ChromaKnowledgeStore(workspace, rag_config)
+
+
 class KnowledgeSearchTool(Tool):
     """Tool for searching knowledge base."""
 
@@ -74,8 +92,7 @@ class KnowledgeSearchTool(Tool):
             workspace = Path(config.agents.defaults.workspace)
 
             # Use ChromaKnowledgeStore for vector-based semantic search
-            from nanobot.knowledge.store import ChromaKnowledgeStore
-            store = ChromaKnowledgeStore(workspace)
+            store = _create_chroma_store_with_config(workspace)
 
             # Search knowledge
             results = store.search_knowledge(
@@ -181,8 +198,7 @@ class KnowledgeAddTool(Tool):
             workspace = Path(config.agents.defaults.workspace)
 
             # Use ChromaKnowledgeStore for vector-based knowledge storage
-            from nanobot.knowledge.store import ChromaKnowledgeStore
-            store = ChromaKnowledgeStore(workspace)
+            store = _create_chroma_store_with_config(workspace)
 
             item_id = store.add_knowledge(
                 domain=domain,
@@ -268,8 +284,7 @@ class DomainKnowledgeTool(Tool):
             workspace = Path(config.agents.defaults.workspace)
 
             # Use ChromaKnowledgeStore for vector-based knowledge storage
-            from nanobot.knowledge.store import ChromaKnowledgeStore
-            store = ChromaKnowledgeStore(workspace)
+            store = _create_chroma_store_with_config(workspace)
             domain_manager = DomainKnowledgeManager(store, "rocketmq")
 
             if action == "search_troubleshooting":
@@ -373,8 +388,7 @@ class KnowledgeExportTool(Tool):
             workspace = Path(config.agents.defaults.workspace)
 
             # Use ChromaKnowledgeStore for vector-based knowledge storage
-            from nanobot.knowledge.store import ChromaKnowledgeStore
-            store = ChromaKnowledgeStore(workspace)
+            store = _create_chroma_store_with_config(workspace)
 
             if format == "json":
                 export_data = store.export_knowledge(domain=domain)

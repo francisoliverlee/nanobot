@@ -525,6 +525,22 @@ class RocketMQKnowledgeInitializer:
 
 def initialize_rocketmq_knowledge(workspace: Path) -> int | tuple[int, int]:
     """Initialize built-in RocketMQ knowledge."""
-    store = ChromaKnowledgeStore(workspace)
+    from nanobot.knowledge.rag_config import RAGConfig
+    from nanobot.config.loader import load_config
+    
+    # 创建 RAGConfig 并从配置文件加载 rerank 设置
+    rag_config = RAGConfig.from_env()
+    
+    # 如果环境变量中没有rerank配置，尝试从config.json加载
+    try:
+        config = load_config()
+        if config.rerank.model_path:
+            rag_config.rerank_model_path = config.rerank.model_path
+        if config.rerank.threshold > 0:
+            rag_config.rerank_threshold = config.rerank.threshold
+    except Exception:
+        pass  # 使用默认配置
+    
+    store = ChromaKnowledgeStore(workspace, rag_config)
     initializer = RocketMQKnowledgeInitializer(store)
     return initializer.initialize()

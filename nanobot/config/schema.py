@@ -215,6 +215,12 @@ class GatewayConfig(BaseModel):
     port: int = 18790
 
 
+class RerankConfig(BaseModel):
+    """Rerank configuration."""
+    model_path: str = ""  # Rerank model path
+    threshold: float = 0.0  # Rerank threshold
+
+
 class WebSearchConfig(BaseModel):
     """Web search tool configuration."""
     api_key: str = ""  # Brave Search API key
@@ -246,6 +252,7 @@ class Config(BaseSettings):
     gateway: GatewayConfig = Field(default_factory=GatewayConfig)
     tools: ToolsConfig = Field(default_factory=ToolsConfig)
     mcp: MCPConfig = Field(default_factory=MCPConfig)
+    rerank: RerankConfig = Field(default_factory=RerankConfig)
 
     @property
     def workspace_path(self) -> Path:
