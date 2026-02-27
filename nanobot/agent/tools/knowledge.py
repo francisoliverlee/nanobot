@@ -118,11 +118,34 @@ class KnowledgeSearchTool(Tool):
             # Format results
             formatted_results = []
             for i, item in enumerate(results, 1):
+                # 添加文档预览信息
+                preview_info = ""
+                preview_links = []
+                
+                # 检查文档链接
+                if hasattr(item, 'source_url') and item.source_url:
+                    preview_links.append(f"📄 文档链接: {item.source_url}")
+                
+                # 检查文件路径
+                if hasattr(item, 'file_path') and item.file_path:
+                    preview_links.append(f"📁 文件路径: {item.file_path}")
+                
+                # 检查是否可预览
+                if hasattr(item, 'preview_available') and item.preview_available:
+                    preview_links.append("🔍 支持预览")
+                
+                # 添加知识条目ID用于预览
+                if hasattr(item, 'id') and item.id:
+                    preview_links.append(f"🆔 条目ID: {item.id}")
+                
+                if preview_links:
+                    preview_info = f"\n**预览信息**: {' | '.join(preview_links)}"
+                
                 formatted_results.append(f"""
 ### {i}. {item.title}
 **Domain**: {item.domain} | **Category**: {item.category} | **Priority**: {item.priority}
 **Tags**: {', '.join(item.tags)}
-**Created**: {item.created_at[:10]}
+**Created**: {item.created_at[:10]}{preview_info}
 
 {item.content}
 
@@ -185,13 +208,30 @@ class KnowledgeAddTool(Tool):
                     "minimum": 1,
                     "maximum": 5,
                     "default": 1
+                },
+                "source_url": {
+                    "type": "string",
+                    "description": "Original document URL (optional)",
+                    "default": ""
+                },
+                "file_path": {
+                    "type": "string", 
+                    "description": "Local file path (optional)",
+                    "default": ""
+                },
+                "preview_available": {
+                    "type": "boolean",
+                    "description": "Whether document preview is available",
+                    "default": True
                 }
             },
             "required": ["domain", "category", "title", "content"]
         }
 
     async def execute(self, domain: str, category: str, title: str, content: str,
-                      tags: Optional[List[str]] = None, priority: int = 1) -> str:
+                      tags: Optional[List[str]] = None, priority: int = 1,
+                      source_url: str = "", file_path: str = "", 
+                      preview_available: bool = True) -> str:
         """Add knowledge to the knowledge base."""
         try:
             config = load_config()
@@ -206,7 +246,10 @@ class KnowledgeAddTool(Tool):
                 title=title,
                 content=content,
                 tags=tags,
-                priority=priority
+                priority=priority,
+                source_url=source_url,
+                file_path=file_path,
+                preview_available=preview_available
             )
 
             return f"Successfully added knowledge item '{title}' with ID: {item_id}"

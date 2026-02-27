@@ -175,6 +175,213 @@ async def get():
     return HTMLResponse(content=html_content)
 
 
+@web_app.get("/api/knowledge/preview")
+async def preview_knowledge_item(item_id: str = None, source_url: str = None, file_path: str = None):
+    """Preview knowledge item content."""
+    try:
+        from nanobot.config.loader import load_config
+        from nanobot.knowledge.store import ChromaKnowledgeStore
+        from nanobot.knowledge.rag_config import RAGConfig
+        import os
+        
+        config = load_config()
+        rag_config = RAGConfig.from_env()
+        
+        # 从配置文件中加载 rerank 配置
+        if config.rerank.model_path:
+            rag_config.rerank_model_path = config.rerank.model_path
+        if config.rerank.threshold > 0:
+            rag_config.rerank_threshold = config.rerank.threshold
+        
+        store = ChromaKnowledgeStore(config.workspace_path, rag_config)
+        
+        # 根据提供的参数获取文档内容
+        if item_id:
+            # 通过item_id获取知识条目的完整内容
+            full_content = await get_full_document_content(store, item_id)
+            if full_content:
+                return {
+                    "status": "success",
+                    "message": "文档预览成功",
+                    "item_id": item_id,
+                    "content": full_content["content"],
+                    "metadata": {
+                        "source": "knowledge_base",
+                        "title": full_content.get("title", ""),
+                        "domain": full_content.get("domain", ""),
+                        "category": full_content.get("category", ""),
+                        "tags": full_content.get("tags", []),
+                        "created_at": full_content.get("created_at", ""),
+                        "source_url": full_content.get("source_url", ""),
+                        "file_path": full_content.get("file_path", ""),
+                        "preview_available": True
+                    }
+                }
+            else:
+                return {
+                    "status": "error",
+                    "message": f"未找到ID为 {item_id} 的知识条目"
+                }
+                
+        elif source_url:
+            # 通过URL获取文档内容
+            try:
+                # 这里可以实现URL内容抓取，暂时返回模拟内容
+                return {
+                    "status": "success", 
+                    "message": "URL文档预览成功",
+                    "source_url": source_url,
+                    "content": f"URL文档内容预览:\n\n来源: {source_url}\n\n注意：URL内容抓取功能需要进一步实现，当前显示的是模拟内容。",
+                    "metadata": {
+                        "source": "url",
+                        "preview_available": True
+                    }
+                }
+            except Exception as e:
+                return {
+                    "status": "error",
+                    "message": f"获取URL内容失败: {str(e)}"
+                }
+                
+        elif file_path:
+            # 通过文件路径获取文档内容
+            try:
+                # 安全检查：确保文件路径在工作空间内
+                workspace_path = str(config.workspace_path)
+                abs_file_path = os.path.abspath(file_path)
+                
+                if not abs_file_path.startswith(workspace_path):
+                    return {
+                        "status": "error",
+                        "message": "文件路径超出工作空间范围，拒绝访问"
+                    }
+                
+                if not os.path.exists(abs_file_path):
+                    return {
+                        "status": "error",
+                        "message": f"文件不存在: {file_path}"
+                    }
+                
+                # 读取文件内容
+                with open(abs_file_path, 'r', encoding='utf-8') as f:
+                    content = f.read()
+                
+                return {
+                    "status": "success",
+                    "message": "文件预览成功", 
+                    "file_path": file_path,
+                    "content": content,
+                    "metadata": {
+                        "source": "file",
+                        "file_size": os.path.getsize(abs_file_path),
+                        "preview_available": True
+                    }
+                }
+            except UnicodeDecodeError:
+                return {
+                    "status": "error",
+                    "message": "文件编码不支持，无法预览"
+                }
+            except Exception as e:
+                return {
+                    "status": "error",
+                    "message": f"读取文件失败: {str(e)}"
+                }
+        else:
+            return {
+                "status": "error",
+                "message": "请提供item_id、source_url或file_path参数"
+            }
+            
+    except Exception as e:
+        return {
+            "status": "error",
+            "message": f"文档预览失败: {str(e)}"
+        }
+
+
+async def get_full_document_content(store, item_id: str):
+    """获取知识条目的完整文档内容."""
+    try:
+        # 查找该知识条目所属的领域
+        domain = None
+        all_collections = store.chroma_client.list_collections()
+        
+        for coll_info in all_collections:
+            coll_name = coll_info.name
+            if coll_name.startswith("knowledge_"):
+                try:
+                    collection = store.chroma_client.get_collection(coll_name)
+                    # 查询该集合中是否有该 item_id 的分块
+                    results = collection.get(
+                        where={"item_id": item_id},
+                        include=["documents", "metadatas"]
+                    )
+                    
+                    if results and results["ids"] and len(results["ids"]) > 0:
+                        domain = coll_name.replace("knowledge_", "")
+                        break
+                except Exception as e:
+                    logger.warning(f"查询集合 {coll_name} 失败: {str(e)}")
+                    continue
+        
+        if not domain:
+            return None
+        
+        # 获取该知识条目的所有分块
+        collection = store.chroma_client.get_collection(f"knowledge_{domain}")
+        chunks = collection.get(
+            where={"item_id": item_id},
+            include=["documents", "metadatas"]
+        )
+        
+        if not chunks or not chunks["ids"]:
+            return None
+        
+        # 按 chunk_index 排序并合并内容
+        chunk_data = []
+        metadata = None
+        
+        for i in range(len(chunks["ids"])):
+            chunk_metadata = chunks["metadatas"][i]
+            chunk_document = chunks["documents"][i]
+            chunk_index = chunk_metadata.get("chunk_index", 0)
+            
+            chunk_data.append({
+                "index": chunk_index,
+                "text": chunk_document,
+                "metadata": chunk_metadata
+            })
+            
+            # 使用第一个分块的元数据作为整体元数据
+            if metadata is None:
+                metadata = chunk_metadata
+        
+        # 按索引排序
+        chunk_data.sort(key=lambda x: x["index"])
+        
+        # 合并所有分块的文本
+        full_content = " ".join(chunk["text"] for chunk in chunk_data)
+        
+        return {
+            "content": full_content,
+            "title": metadata.get("title", ""),
+            "domain": metadata.get("domain", ""),
+            "category": metadata.get("category", ""),
+            "tags": metadata.get("tags", []),
+            "created_at": metadata.get("created_at", ""),
+            "updated_at": metadata.get("updated_at", ""),
+            "source_url": metadata.get("source_url", ""),
+            "file_path": metadata.get("file_path", ""),
+            "source": metadata.get("source", ""),
+            "priority": metadata.get("priority", 1)
+        }
+        
+    except Exception as e:
+        logger.error(f"获取完整文档内容失败: {str(e)}")
+        return None
+
+
 @web_app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
     """Handle WebSocket connections with real-time streaming."""
@@ -254,11 +461,12 @@ async def process_user_message_streaming(user_input: str, websocket: WebSocket):
         await websocket.send_text(f"✅ 知识库查询完成，找到 {len(knowledge_results)} 个结果\n")
         await websocket.send_text(f"📊 最高重排序得分: {top_score:.2f}\n\n")
 
-        # 发送知识库结果
-        await websocket.send_text("📋 知识库查询结果：\n")
-        for i, (item, score) in enumerate(zip(knowledge_results[:3], scores[:3]), 1):
-            await websocket.send_text(f"{i}. {item.title} (得分: {score.get('rerank_score', 0):.2f})\n")
-            await websocket.send_text(f"   内容: {item.content[:100]}...\n\n")
+        # 只显示得分最高的知识库结果
+        await websocket.send_text("📋 最佳匹配结果：\n")
+        top_item = knowledge_results[0]
+        top_score_value = scores[0].get('rerank_score', 0)
+        await websocket.send_text(f"🏆 {top_item.title} (得分: {top_score_value:.2f})\n")
+        await websocket.send_text(f"   内容: {top_item.content[:150]}...\n\n")
 
         # 从配置中获取重排序阈值
         rerank_threshold = config.rerank.threshold if config.rerank.threshold > 0 else 80

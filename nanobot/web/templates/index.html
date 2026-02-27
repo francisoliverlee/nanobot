@@ -960,9 +960,15 @@
                         ✅ ${data.content} <span class=\"knowledge-count\">${knowledgeCount}</span>
                         <div class=\"knowledge-details\">
                             <div class=\"knowledge-result\">${formattedResult}</div>
+                            <div class=\"knowledge-preview-links\" id=\"knowledge-preview-links-${Date.now()}\"></div>
                         </div>
                     </div>
                 `;
+                
+                // 解析知识库结果中的文档链接并添加预览功能
+                setTimeout(() => {
+                    parseKnowledgeResultsForPreview(formattedResult, `knowledge-preview-links-${Date.now()}`);
+                }, 100);
                 break;
             case 'no_results':
                 knowledgeContentDiv.innerHTML += `<div class=\"knowledge-status-no-results\">📭 ${data.content}</div>`;
@@ -1005,6 +1011,394 @@
             'default': '处理过程'
         };
         return titles[contentType] || titles['default'];
+    }
+
+    // 解析知识库结果中的文档链接并添加预览功能
+    function parseKnowledgeResultsForPreview(resultHtml, containerId) {
+        const container = document.getElementById(containerId);
+        if (!container) return;
+        
+        // 创建临时元素来解析HTML
+        const tempDiv = document.createElement('div');
+        tempDiv.innerHTML = resultHtml;
+        
+        // 查找所有包含预览信息的知识条目
+        const knowledgeItems = tempDiv.querySelectorAll('h3');
+        
+        knowledgeItems.forEach((item, index) => {
+            const itemContent = item.nextElementSibling;
+            if (!itemContent) return;
+            
+            // 查找预览信息
+            const itemText = itemContent.textContent || '';
+            
+            // 检查各种类型的预览信息
+            const docLinkMatch = itemText.match(/📄 文档链接[:：]\s*([^\n|]+)/);
+            const filePathMatch = itemText.match(/📁 文件路径[:：]\s*([^\n|]+)/);
+            const itemIdMatch = itemText.match(/🆔 条目ID[:：]\s*([^\n|]+)/);
+            const previewAvailableMatch = itemText.match(/🔍 支持预览/);
+            
+            // 创建预览链接容器
+            const previewContainer = document.createElement('div');
+            previewContainer.className = 'preview-links-container';
+            previewContainer.style.cssText = `
+                margin-top: 10px;
+                padding: 8px;
+                background: rgba(66, 153, 225, 0.1);
+                border-radius: 4px;
+                border-left: 3px solid #4299e1;
+            `;
+            
+            let hasPreviewOptions = false;
+            
+            // 添加文档链接预览
+            if (docLinkMatch) {
+                const linkText = docLinkMatch[1].trim();
+                const previewLink = createPreviewLink('📄 预览文档链接', linkText, 'url', index);
+                previewContainer.appendChild(previewLink);
+                hasPreviewOptions = true;
+            }
+            
+            // 添加文件路径预览
+            if (filePathMatch) {
+                const pathText = filePathMatch[1].trim();
+                const previewLink = createPreviewLink('📁 预览文件内容', pathText, 'file', index);
+                previewContainer.appendChild(previewLink);
+                hasPreviewOptions = true;
+            }
+            
+            // 添加知识条目完整内容预览
+            if (itemIdMatch && previewAvailableMatch) {
+                const itemId = itemIdMatch[1].trim();
+                const previewLink = createPreviewLink('🔍 预览完整内容', itemId, 'item', index);
+                previewContainer.appendChild(previewLink);
+                hasPreviewOptions = true;
+            }
+            
+            // 如果有预览选项，添加到容器中
+            if (hasPreviewOptions) {
+                container.appendChild(previewContainer);
+            }
+        });
+    }
+    
+    // 创建预览链接
+    function createPreviewLink(text, link, type, index) {
+        const previewLink = document.createElement('a');
+        previewLink.href = '#';
+        previewLink.className = 'doc-preview-link';
+        previewLink.style.cssText = `
+            display: inline-block;
+            margin: 2px 5px 2px 0;
+            padding: 4px 8px;
+            background: #4299e1;
+            color: white;
+            text-decoration: none;
+            border-radius: 4px;
+            font-size: 0.85rem;
+            transition: background 0.2s;
+        `;
+        previewLink.textContent = text;
+        previewLink.dataset.link = link;
+        previewLink.dataset.type = type;
+        previewLink.dataset.index = index;
+        
+        previewLink.addEventListener('click', function(e) {
+            e.preventDefault();
+            showDocumentPreview(this.dataset.link, this.dataset.type, this.dataset.index);
+        });
+        
+        previewLink.addEventListener('mouseenter', function() {
+            this.style.background = '#3182ce';
+        });
+        
+        previewLink.addEventListener('mouseleave', function() {
+            this.style.background = '#4299e1';
+        });
+        
+        return previewLink;
+    }
+
+    // 显示文档预览模态框
+    function showDocumentPreview(link, type, index) {
+        // 创建模态框
+        const modal = document.createElement('div');
+        modal.className = 'doc-preview-modal';
+        modal.style.cssText = `
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0,0,0,0.6);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 1000;
+            animation: fadeIn 0.2s ease-out;
+        `;
+        
+        // 创建内容区域
+        const content = document.createElement('div');
+        content.className = 'doc-preview-content';
+        content.style.cssText = `
+            background: white;
+            padding: 0;
+            border-radius: 12px;
+            max-width: 90%;
+            max-height: 90%;
+            overflow: hidden;
+            position: relative;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            display: flex;
+            flex-direction: column;
+        `;
+        
+        // 创建头部
+        const header = document.createElement('div');
+        header.style.cssText = `
+            padding: 20px;
+            border-bottom: 1px solid #e2e8f0;
+            background: #f8fafc;
+            border-radius: 12px 12px 0 0;
+        `;
+        
+        // 添加关闭按钮
+        const closeBtn = document.createElement('button');
+        closeBtn.innerHTML = '×';
+        closeBtn.style.cssText = `
+            position: absolute;
+            top: 15px;
+            right: 20px;
+            background: none;
+            border: none;
+            font-size: 28px;
+            cursor: pointer;
+            color: #718096;
+            width: 32px;
+            height: 32px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: 50%;
+            transition: all 0.2s;
+        `;
+        closeBtn.addEventListener('mouseenter', () => {
+            closeBtn.style.background = '#e2e8f0';
+            closeBtn.style.color = '#2d3748';
+        });
+        closeBtn.addEventListener('mouseleave', () => {
+            closeBtn.style.background = 'none';
+            closeBtn.style.color = '#718096';
+        });
+        closeBtn.addEventListener('click', () => {
+            modal.style.animation = 'fadeOut 0.2s ease-out';
+            setTimeout(() => document.body.removeChild(modal), 200);
+        });
+        
+        // 添加标题和来源信息
+        const title = document.createElement('h3');
+        title.style.cssText = `
+            margin: 0 40px 10px 0;
+            color: #2d3748;
+            font-size: 1.2rem;
+        `;
+        
+        const typeNames = {
+            'url': '文档链接',
+            'file': '本地文件',
+            'item': '知识条目'
+        };
+        title.textContent = `${typeNames[type] || '文档'}预览`;
+        
+        const linkInfo = document.createElement('p');
+        linkInfo.style.cssText = `
+            margin: 0;
+            color: #718096;
+            font-size: 0.9rem;
+            word-break: break-all;
+        `;
+        linkInfo.textContent = `来源: ${link}`;
+        
+        // 创建内容区域
+        const contentArea = document.createElement('div');
+        contentArea.className = 'doc-preview-text';
+        contentArea.style.cssText = `
+            flex: 1;
+            padding: 20px;
+            overflow-y: auto;
+            background: white;
+            font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+            font-size: 14px;
+            line-height: 1.6;
+            white-space: pre-wrap;
+            word-wrap: break-word;
+        `;
+        
+        // 添加加载状态
+        contentArea.innerHTML = `
+            <div style="text-align: center; padding: 40px; color: #718096;">
+                <div style="display: inline-block; width: 20px; height: 20px; border: 2px solid #e2e8f0; border-top: 2px solid #4299e1; border-radius: 50%; animation: spin 1s linear infinite; margin-bottom: 10px;"></div>
+                <div>正在加载文档内容...</div>
+            </div>
+        `;
+        
+        // 组装模态框
+        header.appendChild(title);
+        header.appendChild(linkInfo);
+        content.appendChild(closeBtn);
+        content.appendChild(header);
+        content.appendChild(contentArea);
+        modal.appendChild(content);
+        
+        // 添加CSS动画
+        const style = document.createElement('style');
+        style.textContent = `
+            @keyframes fadeIn {
+                from { opacity: 0; transform: scale(0.9); }
+                to { opacity: 1; transform: scale(1); }
+            }
+            @keyframes fadeOut {
+                from { opacity: 1; transform: scale(1); }
+                to { opacity: 0; transform: scale(0.9); }
+            }
+            @keyframes spin {
+                from { transform: rotate(0deg); }
+                to { transform: rotate(360deg); }
+            }
+        `;
+        document.head.appendChild(style);
+        
+        // 添加到页面
+        document.body.appendChild(modal);
+        
+        // 点击背景关闭
+        modal.addEventListener('click', (e) => {
+            if (e.target === modal) {
+                modal.style.animation = 'fadeOut 0.2s ease-out';
+                setTimeout(() => document.body.removeChild(modal), 200);
+            }
+        });
+        
+        // ESC键关闭
+        const escHandler = (e) => {
+            if (e.key === 'Escape') {
+                modal.style.animation = 'fadeOut 0.2s ease-out';
+                setTimeout(() => document.body.removeChild(modal), 200);
+                document.removeEventListener('keydown', escHandler);
+            }
+        };
+        document.addEventListener('keydown', escHandler);
+        
+        // 加载文档内容
+        loadDocumentContent(link, type, contentArea);
+    }
+
+    // 加载文档内容（需要后端API支持）
+    function loadDocumentContent(link, type, contentArea) {
+        // 调用后端API获取文档内容
+        const params = new URLSearchParams();
+        
+        if (type === 'url') {
+            params.append('source_url', link);
+        } else if (type === 'file') {
+            params.append('file_path', link);
+        } else if (type === 'item') {
+            params.append('item_id', link);
+        }
+        
+        fetch(`/api/knowledge/preview?${params}`)
+            .then(response => response.json())
+            .then(data => {
+                if (data.status === 'success') {
+                    // 成功加载内容
+                    contentArea.innerHTML = '';
+                    
+                    // 如果有元数据，显示元数据信息
+                    if (data.metadata && type === 'item') {
+                        const metadataDiv = document.createElement('div');
+                        metadataDiv.style.cssText = `
+                            background: #f8fafc;
+                            padding: 15px;
+                            border-radius: 6px;
+                            margin-bottom: 15px;
+                            border-left: 4px solid #4299e1;
+                        `;
+                        
+                        const metadataHtml = `
+                            <div style="font-weight: 600; color: #2d3748; margin-bottom: 8px;">📋 文档信息</div>
+                            <div style="font-size: 0.9rem; color: #4a5568; line-height: 1.4;">
+                                <div><strong>标题:</strong> ${data.metadata.title || '无标题'}</div>
+                                <div><strong>领域:</strong> ${data.metadata.domain || '未知'}</div>
+                                <div><strong>分类:</strong> ${data.metadata.category || '未知'}</div>
+                                <div><strong>标签:</strong> ${(data.metadata.tags || []).join(', ') || '无标签'}</div>
+                                <div><strong>创建时间:</strong> ${data.metadata.created_at ? new Date(data.metadata.created_at).toLocaleString() : '未知'}</div>
+                                ${data.metadata.source_url ? `<div><strong>原始链接:</strong> ${data.metadata.source_url}</div>` : ''}
+                                ${data.metadata.file_path ? `<div><strong>文件路径:</strong> ${data.metadata.file_path}</div>` : ''}
+                            </div>
+                        `;
+                        metadataDiv.innerHTML = metadataHtml;
+                        contentArea.appendChild(metadataDiv);
+                    }
+                    
+                    // 显示文档内容
+                    const contentDiv = document.createElement('div');
+                    contentDiv.style.cssText = `
+                        background: #ffffff;
+                        padding: 15px;
+                        border-radius: 6px;
+                        border: 1px solid #e2e8f0;
+                        white-space: pre-wrap;
+                        word-wrap: break-word;
+                        line-height: 1.6;
+                    `;
+                    
+                    // 简单的内容格式化
+                    let formattedContent = data.content;
+                    
+                    // 检测并高亮代码块
+                    if (formattedContent.includes('```')) {
+                        formattedContent = formattedContent.replace(
+                            /```(\w+)?\n([\s\S]*?)```/g,
+                            '<div style="background: #f1f5f9; padding: 10px; border-radius: 4px; margin: 10px 0; border-left: 3px solid #64748b;"><code style="font-family: Monaco, monospace; font-size: 0.9rem;">$2</code></div>'
+                        );
+                    }
+                    
+                    // 高亮标题
+                    formattedContent = formattedContent.replace(
+                        /^(#{1,6})\s+(.+)$/gm,
+                        '<div style="font-weight: 600; color: #2d3748; margin: 15px 0 8px 0; font-size: 1.1rem;">$2</div>'
+                    );
+                    
+                    // 高亮重要信息
+                    formattedContent = formattedContent.replace(
+                        /\*\*(.*?)\*\*/g,
+                        '<strong style="color: #2d3748;">$1</strong>'
+                    );
+                    
+                    contentDiv.innerHTML = formattedContent;
+                    contentArea.appendChild(contentDiv);
+                    
+                } else {
+                    // 显示错误信息
+                    contentArea.innerHTML = `
+                        <div style="text-align: center; padding: 40px; color: #e53e3e;">
+                            <div style="font-size: 48px; margin-bottom: 15px;">⚠️</div>
+                            <div style="font-size: 1.1rem; font-weight: 600; margin-bottom: 8px;">文档预览失败</div>
+                            <div style="color: #718096;">${data.message || '未知错误'}</div>
+                        </div>
+                    `;
+                }
+            })
+            .catch(error => {
+                contentArea.innerHTML = `
+                    <div style="text-align: center; padding: 40px; color: #e53e3e;">
+                        <div style="font-size: 48px; margin-bottom: 15px;">🔌</div>
+                        <div style="font-size: 1.1rem; font-weight: 600; margin-bottom: 8px;">网络请求失败</div>
+                        <div style="color: #718096;">${error.message}</div>
+                    </div>
+                `;
+            });
     }
 
     // 创建流式内容区域

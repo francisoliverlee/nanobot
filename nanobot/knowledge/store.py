@@ -57,6 +57,12 @@ class KnowledgeItem:
     updated_at: str
     source: str = "user"  # "user" or "system"
     priority: int = 1  # 1-5, higher is more important
+    
+    # 新增文档预览相关字段
+    source_url: str = ""  # 原文档链接
+    file_path: str = ""  # 本地文件路径
+    full_content: str = ""  # 完整文档内容
+    preview_available: bool = False  # 是否可预览
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for JSON serialization."""
@@ -468,7 +474,10 @@ class ChromaKnowledgeStore:
             content: str,
             tags: List[str] = None,
             source: str = "user",
-            priority: int = 1
+            priority: int = 1,
+            source_url: str = "",
+            file_path: str = "",
+            preview_available: bool = True
     ) -> str:
         """添加知识条目.
 
@@ -480,6 +489,9 @@ class ChromaKnowledgeStore:
             tags: 标签列表
             source: 来源
             priority: 优先级
+            source_url: 原文档链接
+            file_path: 本地文件路径
+            preview_available: 是否可预览
 
         Returns:
             知识条目 ID
@@ -501,7 +513,11 @@ class ChromaKnowledgeStore:
             "source": source,
             "priority": priority,
             "created_at": datetime.now().isoformat(),
-            "updated_at": datetime.now().isoformat()
+            "updated_at": datetime.now().isoformat(),
+            # 文档预览相关字段
+            "source_url": source_url,
+            "file_path": file_path,
+            "preview_available": preview_available
         }
 
         try:
@@ -730,7 +746,11 @@ class ChromaKnowledgeStore:
                         created_at=metadata.get("created_at", ""),
                         updated_at=metadata.get("updated_at", ""),
                         source=metadata.get("source", "user"),
-                        priority=metadata.get("priority", 1)
+                        priority=metadata.get("priority", 1),
+                        # 文档预览相关字段
+                        source_url=metadata.get("source_url", ""),
+                        file_path=metadata.get("file_path", ""),
+                        preview_available=metadata.get("preview_available", False)
                     )
 
                     # 添加相似度分数和重排序分数（作为额外属性）
@@ -909,7 +929,11 @@ class ChromaKnowledgeStore:
                         created_at=metadata.get("created_at", ""),
                         updated_at=metadata.get("updated_at", ""),
                         source=metadata.get("source", "user"),
-                        priority=metadata.get("priority", 1)
+                        priority=metadata.get("priority", 1),
+                        # 文档预览相关字段
+                        source_url=metadata.get("source_url", ""),
+                        file_path=metadata.get("file_path", ""),
+                        preview_available=metadata.get("preview_available", False)
                     )
 
                     knowledge_items.append(knowledge_item)
@@ -1335,7 +1359,11 @@ class ChromaKnowledgeStore:
                                 created_at=metadata.get("created_at", ""),
                                 updated_at=metadata.get("updated_at", ""),
                                 source=metadata.get("source", "user"),
-                                priority=metadata.get("priority", 1)
+                                priority=metadata.get("priority", 1),
+                                # 文档预览相关字段
+                                source_url=metadata.get("source_url", ""),
+                                file_path=metadata.get("file_path", ""),
+                                preview_available=metadata.get("preview_available", False)
                             )
 
                             knowledge_items.append(knowledge_item.to_dict())
