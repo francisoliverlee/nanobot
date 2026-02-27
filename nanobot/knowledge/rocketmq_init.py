@@ -351,7 +351,9 @@ class RocketMQKnowledgeInitializer:
                             knowledge_type=knowledge_type,
                             title=item["title"],
                             content=item["content"],
-                            tags=item["tags"]
+                            tags=item["tags"],
+                            file_path=item.get("file_path", ""),
+                            source_url=item.get("source_url", "")
                         )
                     else:
                         # 使用旧的存储方式
@@ -398,7 +400,9 @@ class RocketMQKnowledgeInitializer:
             knowledge_type: str,
             title: str,
             content: str,
-            tags: List[str]
+            tags: List[str],
+            file_path: str = "",
+            source_url: str = ""
     ) -> None:
         """添加知识并进行向量化存储.
         
@@ -407,6 +411,8 @@ class RocketMQKnowledgeInitializer:
             title: 标题
             content: 内容
             tags: 标签列表
+            file_path: 原始文件路径
+            source_url: 原始文档URL
         """
         from datetime import datetime
 
@@ -432,7 +438,11 @@ class RocketMQKnowledgeInitializer:
             "source": "system",
             "priority": priority,
             "created_at": datetime.now().isoformat(),
-            "updated_at": datetime.now().isoformat()
+            "updated_at": datetime.now().isoformat(),
+            # 文档预览相关字段
+            "source_url": source_url,
+            "file_path": file_path,
+            "preview_available": bool(file_path or source_url)  # 有文件路径或URL就可以预览
         }
 
         try:

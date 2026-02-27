@@ -498,6 +498,36 @@ async def process_user_message_streaming(user_input: str, websocket: WebSocket):
 ---
 """
         
+        # 构建预览项目数组
+        preview_items = []
+        
+        # 添加文件路径预览项
+        if hasattr(top_item, 'file_path') and top_item.file_path:
+            preview_items.append({
+                'type': 'file',
+                'id': top_item.file_path,
+                'label': '📁 预览文件内容',
+                'path': top_item.file_path
+            })
+        
+        # 添加文档链接预览项
+        if hasattr(top_item, 'source_url') and top_item.source_url:
+            preview_items.append({
+                'type': 'url',
+                'id': top_item.source_url,
+                'label': '📄 预览文档链接',
+                'url': top_item.source_url
+            })
+        
+        # 添加完整内容预览项
+        if hasattr(top_item, 'id') and top_item.id and hasattr(top_item, 'preview_available') and top_item.preview_available:
+            preview_items.append({
+                'type': 'item',
+                'id': top_item.id,
+                'label': '🔍 预览完整内容',
+                'item_id': top_item.id
+            })
+        
         # 通过JSON格式发送知识库结果，这样前端可以解析预览信息
         import json
         knowledge_message = {
@@ -507,6 +537,7 @@ async def process_user_message_streaming(user_input: str, websocket: WebSocket):
             'knowledge_status': 'success',
             'knowledge_count': len(knowledge_results),
             'knowledge_result': formatted_result,
+            'preview_items': preview_items,  # 新增预览项目数组
             'timestamp': time.time(),
             'duration_from_start': round(time.time() - start_time, 3)
         }

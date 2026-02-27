@@ -966,9 +966,14 @@
                     </div>
                 `;
                 
-                // 解析知识库结果中的文档链接并添加预览功能
+                // 使用新的预览项目数组生成预览链接
                 setTimeout(() => {
-                    parseKnowledgeResultsForPreview(formattedResult, previewLinksId);
+                    if (data.preview_items && data.preview_items.length > 0) {
+                        createPreviewLinksFromArray(data.preview_items, previewLinksId);
+                    } else {
+                        // 兼容旧的解析方式
+                        parseKnowledgeResultsForPreview(formattedResult, previewLinksId);
+                    }
                 }, 100);
                 break;
             case 'no_results':
@@ -1092,6 +1097,72 @@
                 container.appendChild(previewContainer);
             }
         });
+    }
+    
+    // 使用预览项目数组创建预览链接
+    function createPreviewLinksFromArray(previewItems, containerId) {
+        const container = document.getElementById(containerId);
+        if (!container || !previewItems || previewItems.length === 0) return;
+        
+        // 创建预览链接容器
+        const previewContainer = document.createElement('div');
+        previewContainer.className = 'preview-links-container';
+        previewContainer.style.cssText = `
+            margin-top: 10px;
+            padding: 8px;
+            background: rgba(66, 153, 225, 0.1);
+            border-radius: 4px;
+            border-left: 3px solid #4299e1;
+        `;
+        
+        // 为每个预览项目创建链接
+        previewItems.forEach((item, index) => {
+            const previewLink = document.createElement('a');
+            previewLink.href = '#';
+            previewLink.className = 'doc-preview-link';
+            previewLink.style.cssText = `
+                display: inline-block;
+                margin: 2px 5px 2px 0;
+                padding: 4px 8px;
+                background: #4299e1;
+                color: white;
+                text-decoration: none;
+                border-radius: 3px;
+                font-size: 0.85rem;
+                transition: background-color 0.2s;
+            `;
+            
+            previewLink.textContent = item.label;
+            previewLink.dataset.type = item.type;
+            previewLink.dataset.id = item.id;
+            previewLink.dataset.index = index;
+            
+            // 根据类型设置额外的数据属性
+            if (item.type === 'file' && item.path) {
+                previewLink.dataset.path = item.path;
+            } else if (item.type === 'url' && item.url) {
+                previewLink.dataset.url = item.url;
+            } else if (item.type === 'item' && item.item_id) {
+                previewLink.dataset.itemId = item.item_id;
+            }
+            
+            previewLink.addEventListener('click', function(e) {
+                e.preventDefault();
+                showDocumentPreviewFromArray(this.dataset);
+            });
+            
+            previewLink.addEventListener('mouseenter', function() {
+                this.style.background = '#3182ce';
+            });
+            
+            previewLink.addEventListener('mouseleave', function() {
+                this.style.background = '#4299e1';
+            });
+            
+            previewContainer.appendChild(previewLink);
+        });
+        
+        container.appendChild(previewContainer);
     }
     
     // 创建预览链接
@@ -1406,6 +1477,235 @@
                 contentArea.innerHTML = `
                     <div style="text-align: center; padding: 40px; color: #e53e3e;">
                         <div style="font-size: 48px; margin-bottom: 15px;">🔌</div>
+                        <div style="font-size: 1.1rem; font-weight: 600; margin-bottom: 8px;">网络请求失败</div>
+                        <div style="color: #718096;">${error.message}</div>
+                    </div>
+                `;
+            });
+    }
+
+    // 使用预览项目数组显示文档预览
+    function showDocumentPreviewFromArray(dataset) {
+        const type = dataset.type;
+        const id = dataset.id;
+        
+        // 创建模态框
+        const modal = document.createElement('div');
+        modal.className = 'doc-preview-modal';
+        modal.style.cssText = `
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.7);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            z-index: 10000;
+            animation: fadeIn 0.3s ease-out;
+        `;
+        
+        // 创建内容容器
+        const content = document.createElement('div');
+        content.className = 'doc-preview-content';
+        content.style.cssText = `
+            background: white;
+            border-radius: 8px;
+            width: 90%;
+            max-width: 900px;
+            height: 80%;
+            display: flex;
+            flex-direction: column;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+            animation: slideIn 0.3s ease-out;
+        `;
+        
+        // 创建头部
+        const header = document.createElement('div');
+        header.style.cssText = `
+            padding: 20px;
+            border-bottom: 1px solid #e2e8f0;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            background: #f8fafc;
+            border-radius: 8px 8px 0 0;
+        `;
+        
+        const title = document.createElement('h3');
+        title.style.cssText = `
+            margin: 0;
+            color: #2d3748;
+            font-size: 1.2rem;
+        `;
+        
+        const typeNames = {
+            'file': '文件',
+            'url': '文档链接',
+            'item': '完整内容'
+        };
+        title.textContent = `${typeNames[type] || '文档'}预览`;
+        
+        const closeBtn = document.createElement('button');
+        closeBtn.innerHTML = '✕';
+        closeBtn.style.cssText = `
+            background: none;
+            border: none;
+            font-size: 1.5rem;
+            cursor: pointer;
+            color: #718096;
+            padding: 0;
+            width: 30px;
+            height: 30px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: 50%;
+            transition: all 0.2s;
+        `;
+        
+        closeBtn.addEventListener('click', () => {
+            document.body.removeChild(modal);
+        });
+        
+        closeBtn.addEventListener('mouseenter', () => {
+            closeBtn.style.background = '#e2e8f0';
+            closeBtn.style.color = '#2d3748';
+        });
+        
+        closeBtn.addEventListener('mouseleave', () => {
+            closeBtn.style.background = 'none';
+            closeBtn.style.color = '#718096';
+        });
+        
+        header.appendChild(title);
+        header.appendChild(closeBtn);
+        
+        // 创建内容区域
+        const contentArea = document.createElement('div');
+        contentArea.className = 'doc-preview-text';
+        contentArea.style.cssText = `
+            flex: 1;
+            padding: 20px;
+            overflow-y: auto;
+            font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+            font-size: 0.9rem;
+            line-height: 1.6;
+            color: #2d3748;
+            background: #fafafa;
+        `;
+        
+        // 显示加载状态
+        contentArea.innerHTML = `
+            <div style="display: flex; align-items: center; justify-content: center; height: 200px;">
+                <div style="text-align: center;">
+                    <div style="font-size: 2rem; margin-bottom: 10px;">📄</div>
+                    <div style="color: #718096;">正在加载文档内容...</div>
+                </div>
+            </div>
+        `;
+        
+        content.appendChild(header);
+        content.appendChild(contentArea);
+        modal.appendChild(content);
+        document.body.appendChild(modal);
+        
+        // 点击模态框外部关闭
+        modal.addEventListener('click', (e) => {
+            if (e.target === modal) {
+                document.body.removeChild(modal);
+            }
+        });
+        
+        // ESC键关闭
+        const handleEsc = (e) => {
+            if (e.key === 'Escape') {
+                document.body.removeChild(modal);
+                document.removeEventListener('keydown', handleEsc);
+            }
+        };
+        document.addEventListener('keydown', handleEsc);
+        
+        // 加载文档内容
+        loadDocumentContentFromArray(dataset, contentArea);
+    }
+
+    // 使用预览项目数据加载文档内容
+    function loadDocumentContentFromArray(dataset, contentArea) {
+        const type = dataset.type;
+        const params = new URLSearchParams();
+        
+        // 根据类型设置不同的参数
+        if (type === 'file' && dataset.path) {
+            params.append('file_path', dataset.path);
+        } else if (type === 'url' && dataset.url) {
+            params.append('source_url', dataset.url);
+        } else if (type === 'item' && dataset.itemId) {
+            params.append('item_id', dataset.itemId);
+        } else {
+            contentArea.innerHTML = `
+                <div style="text-align: center; padding: 40px; color: #e53e3e;">
+                    <div style="font-size: 1.1rem; font-weight: 600; margin-bottom: 8px;">参数错误</div>
+                    <div style="color: #718096;">无效的预览参数</div>
+                </div>
+            `;
+            return;
+        }
+        
+        fetch(`/api/knowledge/preview?${params}`)
+            .then(response => response.json())
+            .then(data => {
+                if (data.status === 'success') {
+                    // 格式化内容显示
+                    const formattedContent = data.content
+                        .replace(/&/g, '&amp;')
+                        .replace(/</g, '&lt;')
+                        .replace(/>/g, '&gt;')
+                        .replace(/\\n/g, '<br>')
+                        .replace(/\\t/g, '&nbsp;&nbsp;&nbsp;&nbsp;');
+                    
+                    contentArea.innerHTML = `<pre style="white-space: pre-wrap; margin: 0;">${formattedContent}</pre>`;
+                    
+                    // 如果有元数据，显示元数据信息
+                    if (data.metadata && type === 'item') {
+                        const metadataDiv = document.createElement('div');
+                        metadataDiv.style.cssText = `
+                            background: #f8fafc;
+                            padding: 15px;
+                            border-radius: 6px;
+                            margin-bottom: 15px;
+                            border-left: 4px solid #4299e1;
+                        `;
+                        
+                        const metadataHtml = `
+                            <div style="font-weight: 600; color: #2d3748; margin-bottom: 8px;">📋 文档信息</div>
+                            <div style="font-size: 0.9rem; color: #4a5568; line-height: 1.4;">
+                                <div><strong>标题:</strong> ${data.metadata.title || '无标题'}</div>
+                                <div><strong>领域:</strong> ${data.metadata.domain || '未知'}</div>
+                                <div><strong>分类:</strong> ${data.metadata.category || '未知'}</div>
+                                <div><strong>标签:</strong> ${(data.metadata.tags || []).join(', ') || '无标签'}</div>
+                                <div><strong>创建时间:</strong> ${data.metadata.created_at ? new Date(data.metadata.created_at).toLocaleString() : '未知'}</div>
+                                ${data.metadata.source_url ? `<div><strong>原始链接:</strong> ${data.metadata.source_url}</div>` : ''}
+                                ${data.metadata.file_path ? `<div><strong>文件路径:</strong> ${data.metadata.file_path}</div>` : ''}
+                            </div>
+                        `;
+                        
+                        metadataDiv.innerHTML = metadataHtml;
+                        contentArea.insertBefore(metadataDiv, contentArea.firstChild);
+                    }
+                } else {
+                    contentArea.innerHTML = `
+                        <div style="text-align: center; padding: 40px; color: #e53e3e;">
+                            <div style="font-size: 1.1rem; font-weight: 600; margin-bottom: 8px;">文档预览失败</div>
+                            <div style="color: #718096;">${data.message || '未知错误'}</div>
+                        </div>
+                    `;
+                }
+            })
+            .catch(error => {
+                contentArea.innerHTML = `
+                    <div style="text-align: center; padding: 40px; color: #e53e3e;">
                         <div style="font-size: 1.1rem; font-weight: 600; margin-bottom: 8px;">网络请求失败</div>
                         <div style="color: #718096;">${error.message}</div>
                     </div>
