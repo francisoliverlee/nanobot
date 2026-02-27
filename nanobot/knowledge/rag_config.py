@@ -14,11 +14,11 @@ class RAGConfig:
     """
 
     # Embedding model configuration
-    embedding_model: str = "paraphrase-multilingual-MiniLM-L12-v2"
+    embedding_model: str = "BAAI/bge-large-zh-v1.5"
 
     # Text chunking configuration
-    chunk_size: int = 1000
-    chunk_overlap: int = 200
+    chunk_size: int = 500
+    chunk_overlap: int = 100
 
     # Retrieval configuration
     top_k: int = 5

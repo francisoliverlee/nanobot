@@ -136,7 +136,7 @@ sequenceDiagram
 class VectorEmbedder:
     """文本向量化器，使用本地 Embedding 模型"""
     
-    def __init__(self, model_name: str = "paraphrase-multilingual-MiniLM-L12-v2"):
+    def __init__(self, model_name: str = "BAAI/bge-large-zh-v1.5"):
         """
         初始化向量化器
         
@@ -340,7 +340,7 @@ class RAGConfig:
     """RAG 系统配置"""
     
     # Embedding 模型配置
-    embedding_model: str = "paraphrase-multilingual-MiniLM-L12-v2"
+    embedding_model: str = "BAAI/bge-large-zh-v1.5"
     
     # 文本分块配置
     chunk_size: int = 1000
@@ -1041,7 +1041,7 @@ self.chroma_client = chromadb.PersistentClient(
 
 推荐使用支持中文的多语言模型：
 
-- `paraphrase-multilingual-MiniLM-L12-v2`: 轻量级，适合资源受限环境
+- `BAAI/bge-large-zh-v1.5`: 轻量级，适合资源受限环境
 - `paraphrase-multilingual-mpnet-base-v2`: 更高质量，需要更多资源
 - `distiluse-base-multilingual-cased-v2`: 平衡性能和质量
 
