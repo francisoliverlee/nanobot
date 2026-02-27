@@ -461,12 +461,57 @@ async def process_user_message_streaming(user_input: str, websocket: WebSocket):
         await websocket.send_text(f"✅ 知识库查询完成，找到 {len(knowledge_results)} 个结果\n")
         await websocket.send_text(f"📊 最高重排序得分: {top_score:.2f}\n\n")
 
-        # 只显示得分最高的知识库结果
-        await websocket.send_text("📋 最佳匹配结果：\n")
+        # 格式化知识库结果，包含预览信息
         top_item = knowledge_results[0]
-        top_score_value = scores[0].get('rerank_score', 0)
-        await websocket.send_text(f"🏆 {top_item.title} (得分: {top_score_value:.2f})\n")
-        await websocket.send_text(f"   内容: {top_item.content[:150]}...\n\n")
+        
+        # 添加预览信息
+        preview_links = []
+        
+        # 检查文档链接
+        if hasattr(top_item, 'source_url') and top_item.source_url:
+            preview_links.append(f"📄 文档链接: {top_item.source_url}")
+        
+        # 检查文件路径
+        if hasattr(top_item, 'file_path') and top_item.file_path:
+            preview_links.append(f"📁 文件路径: {top_item.file_path}")
+        
+        # 检查是否可预览
+        if hasattr(top_item, 'preview_available') and top_item.preview_available:
+            preview_links.append("🔍 支持预览")
+        
+        # 添加知识条目ID用于预览
+        if hasattr(top_item, 'id') and top_item.id:
+            preview_links.append(f"🆔 条目ID: {top_item.id}")
+        
+        preview_info = ""
+        if preview_links:
+            preview_info = f"\n**预览信息**: {' | '.join(preview_links)}"
+        
+        # 格式化知识库结果
+        formatted_result = f"""### 1. {top_item.title}
+**Domain**: {top_item.domain} | **Category**: {top_item.category} | **Priority**: {top_item.priority}
+**Tags**: {', '.join(top_item.tags)}
+**Created**: {top_item.created_at[:10]}{preview_info}
+
+{top_item.content}
+
+---
+"""
+        
+        # 通过JSON格式发送知识库结果，这样前端可以解析预览信息
+        import json
+        knowledge_message = {
+            'type': 'stream_chunk',
+            'content_type': 'knowledge',
+            'content': f"找到 {len(knowledge_results)} 个结果，最高得分: {top_score:.2f}",
+            'knowledge_status': 'success',
+            'knowledge_count': len(knowledge_results),
+            'knowledge_result': formatted_result,
+            'timestamp': time.time(),
+            'duration_from_start': round(time.time() - start_time, 3)
+        }
+        
+        await websocket.send_text(json.dumps(knowledge_message, ensure_ascii=False))
 
         # 从配置中获取重排序阈值
         rerank_threshold = config.rerank.threshold if config.rerank.threshold > 0 else 80

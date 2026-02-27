@@ -955,19 +955,20 @@
                 break;
             case 'success':
                 const formattedResult = knowledgeResult.replace(/\\n/g, '\\n');
+                const previewLinksId = `knowledge-preview-links-${Date.now()}`;
                 knowledgeContentDiv.innerHTML += `
                     <div class=\"knowledge-status-success\">
                         ✅ ${data.content} <span class=\"knowledge-count\">${knowledgeCount}</span>
                         <div class=\"knowledge-details\">
                             <div class=\"knowledge-result\">${formattedResult}</div>
-                            <div class=\"knowledge-preview-links\" id=\"knowledge-preview-links-${Date.now()}\"></div>
+                            <div class=\"knowledge-preview-links\" id=\"${previewLinksId}\"></div>
                         </div>
                     </div>
                 `;
                 
                 // 解析知识库结果中的文档链接并添加预览功能
                 setTimeout(() => {
-                    parseKnowledgeResultsForPreview(formattedResult, `knowledge-preview-links-${Date.now()}`);
+                    parseKnowledgeResultsForPreview(formattedResult, previewLinksId);
                 }, 100);
                 break;
             case 'no_results':
@@ -1026,11 +1027,22 @@
         const knowledgeItems = tempDiv.querySelectorAll('h3');
         
         knowledgeItems.forEach((item, index) => {
-            const itemContent = item.nextElementSibling;
-            if (!itemContent) return;
+            // 获取整个知识条目的文本内容
+            let currentElement = item;
+            let itemText = '';
             
-            // 查找预览信息
-            const itemText = itemContent.textContent || '';
+            // 收集从h3开始到下一个h3或结束的所有文本
+            while (currentElement && currentElement.nextSibling) {
+                currentElement = currentElement.nextSibling;
+                if (currentElement.nodeType === Node.TEXT_NODE) {
+                    itemText += currentElement.textContent;
+                } else if (currentElement.nodeType === Node.ELEMENT_NODE) {
+                    if (currentElement.tagName === 'H3') {
+                        break; // 遇到下一个h3就停止
+                    }
+                    itemText += currentElement.textContent || '';
+                }
+            }
             
             // 检查各种类型的预览信息
             const docLinkMatch = itemText.match(/📄 文档链接[:：]\s*([^\n|]+)/);
