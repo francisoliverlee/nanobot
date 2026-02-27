@@ -276,31 +276,35 @@ class ChromaKnowledgeStore:
             # 获取重排序分数
             scores = self.cross_encoder.predict(pairs)
 
-            # 将分数缩放到0-100范围
-            min_score = min(scores)
-            max_score = max(scores)
-            if max_score > min_score:
-                scaled_scores = [(score - min_score) / (max_score - min_score) * 100 for score in scores]
-            else:
-                scaled_scores = [50.0 for _ in scores]
+            # 将分数直接转换为百分制（0-100）
+            # CrossEncoder的输出通常在-10到10之间，我们使用sigmoid函数转换为0-100
+            import math
+            scaled_scores = [1 / (1 + math.exp(-score)) * 100 for score in scores]
 
-            # 从RAGConfig中获取重排序权重
-            rerank_threshold = getattr(self.config, 'rerank_threshold', 0.8)
+            # 从RAGConfig中获取重排序阈值
+            rerank_threshold = getattr(self.config, 'rerank_threshold', 60.0)  # 默认阈值60分
 
-            # 更新结果列表
+            # 过滤并更新结果列表
+            filtered_results = []
             for i, score in enumerate(scaled_scores):
                 original_score = results[i].get('similarity_score', 0)
-                # 计算加权分数
-                weighted_score = (score * rerank_threshold) + (original_score * 100 * (1 - rerank_threshold))
-                results[i]['rerank_score'] = weighted_score
-                results[i]['original_score'] = original_score
+                
+                # 只保留超过阈值的结果
+                if score >= rerank_threshold:
+                    results[i]['rerank_score'] = score
+                    results[i]['original_score'] = original_score
+                    filtered_results.append(results[i])
 
             # 按重排序分数降序排序
-            results.sort(key=lambda x: x['rerank_score'], reverse=True)
+            filtered_results.sort(key=lambda x: x['rerank_score'], reverse=True)
+            
+            # 更新results为过滤后的结果
+            results = filtered_results
 
             elapsed = (datetime.now() - start_time).total_seconds()
             logger.info(f"✅ 重排序完成，耗时: {elapsed:.3f}秒")
-            logger.info(f"   - 重排序结果数: {len(results)}")
+            logger.info(f"   - 原始结果数: {len([r for r in results if 'rerank_score' in r]) + len([r for r in results if 'rerank_score' not in r])}")
+            logger.info(f"   - 过滤后结果数: {len(results)} (阈值: {rerank_threshold}分)")
 
             # 记录前3个结果的得分
             for i, result in enumerate(results[:3], 1):
