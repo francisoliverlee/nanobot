@@ -112,7 +112,9 @@ class ChromaKnowledgeStore:
         self.embedder = VectorEmbedder(self.config.embedding_model)
         self.chunker = TextChunker(
             chunk_size=self.config.chunk_size,
-            chunk_overlap=self.config.chunk_overlap
+            chunk_overlap=self.config.chunk_overlap,
+            smart_chunking=True,  # 启用智能分割
+            preserve_structure=True  # 保持文档结构
         )
         self.chroma_client = None
         self._init_chroma()
