@@ -135,15 +135,44 @@
 
         .message {
             display: flex;
+            flex-direction: column;
             margin-bottom: 20px;
             animation: fadeIn 0.3s ease-in;
         }
 
         .message.user {
-            justify-content: flex-end;
+            align-items: flex-end;
         }
 
         .message.ai {
+            align-items: flex-start;
+        }
+
+        .message-timestamp {
+            font-size: 0.8rem;
+            color: #a0aec0;
+            margin-bottom: 5px;
+            padding: 0 10px;
+        }
+
+        .message.user .message-timestamp {
+            text-align: right;
+        }
+
+        .message.ai .message-timestamp {
+            text-align: left;
+        }
+
+        .message-wrapper {
+            display: flex;
+            align-items: flex-start;
+        }
+
+        .message.user .message-wrapper {
+            justify-content: flex-end;
+        }
+
+        .message.ai .message-wrapper {
             justify-content: flex-start;
         }
 
@@ -215,6 +244,7 @@
         .timestamp {
             font-size: 0.8rem;
             color: #a0aec0;
+            /* 移除原有的timestamp样式，因为现在时间显示在外部 */
         }
 
         /* 流式内容分类显示样式 */
@@ -491,8 +521,8 @@
         </div>
         <div class="sidebar-content">
             <div>
-                <p>🚧 功能开发中</p>
-                <p style="font-size: 0.8rem; margin-top: 10px;">左侧边栏将用于显示历史对话、设置等功能</p>
+                <p style="font-size: 0.8rem; margin-top: 10px;">1. 当前是小模型，无记忆，无上下文联系</p>
+                <p style="font-size: 0.8rem; margin-top: 10px;">2. 目前用于RocketMQ相关问题处理</p>
             </div>
         </div>
     </div>
@@ -506,10 +536,12 @@
 
         <div class="messages-container" id="messages">
             <div class="message ai">
-                <div class="avatar">AI</div>
-                <div class="message-content">
-                    Hello! I'm Taether, your rocketmq assistant. How can I help you today?
-                    <div class="timestamp">Just now</div>
+                <div class="message-timestamp">Just now</div>
+                <div class="message-wrapper">
+                    <div class="avatar">AI</div>
+                    <div class="message-content">
+                        Hello! I'm Taether, your rocketmq assistant. How can I help you today?
+                    </div>
                 </div>
             </div>
         </div>
@@ -541,11 +573,13 @@
         const messageDiv = document.createElement('div');
         messageDiv.className = 'message user';
         messageDiv.innerHTML = `
-            <div class="message-content">
-                ${content}
-                <div class="timestamp">${new Date().toLocaleTimeString()}</div>
+            <div class="message-timestamp">${new Date().toLocaleTimeString()}</div>
+            <div class="message-wrapper">
+                <div class="message-content">
+                    ${content}
+                </div>
+                <div class="avatar">U</div>
             </div>
-            <div class="avatar">U</div>
         `;
         messagesDiv.appendChild(messageDiv);
         scrollToBottom();
