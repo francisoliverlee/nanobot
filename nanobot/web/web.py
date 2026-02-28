@@ -450,7 +450,7 @@ async def classify_user_intent(user_input: str, websocket: WebSocket) -> str:
 A: 问答类（查定义、查配置、静态知识）
 B: 排查类（报错、连不上、检查状态、超时，查错, 定位, 导致, 原因, 为什么, 怎么办, 如何）
 C: 查询类 (查pod、查组件、查看、查询、查日志)
-问题：{user_input}"""
+问题：在rocketmq，{user_input}"""
 
     try:
         await websocket.send_text("🧠 正在识别用户意图...\n")
