@@ -163,6 +163,17 @@ class AgentDefaults(BaseModel):
     max_tokens: int = 8192
     temperature: float = 0.7
     max_tool_iterations: int = 20
+    
+    # RAG configuration
+    embedding_model: str = ""
+    chunk_size: int = 500
+    chunk_overlap: int = 100
+    top_k: int = 5
+    similarity_threshold: float = 0.0
+    batch_size: int = 32
+    timeout: int = 5
+    rerank_model_path: str = ""
+    rerank_threshold: float = 0.8
 
 
 class AgentsConfig(BaseModel):

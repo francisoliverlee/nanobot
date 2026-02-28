@@ -28,7 +28,7 @@
 - **2026-02-05** ✨ Added Feishu channel, DeepSeek provider, and enhanced scheduled tasks support!
 - **2026-02-04** 🚀 Released v0.1.3.post4 with multi-provider & Docker support! Check [here](https://github.com/HKUDS/nanobot/releases/tag/v0.1.3.post4) for details.
 - **2026-02-03** ⚡ Integrated vLLM for local LLM support and improved natural language task scheduling!
-- **2026-02-02** 🎉 nanobot officially launched! Welcome to try 🐈 nanobot!
+- **2026-02-02** 🎉 nanobot officially launched! Welcome to try 🐱 nanobot!
 
 ## Key Features of nanobot:
 
@@ -913,6 +913,45 @@ docker run -v ~/.nanobot:/root/.nanobot -p 18790:18790 nanobot gateway
 docker run -v ~/.nanobot:/root/.nanobot --rm nanobot agent -m "Hello!"
 docker run -v ~/.nanobot:/root/.nanobot --rm nanobot status
 ```
+
+## 🔍 RAG Configuration
+
+nanobot supports Retrieval-Augmented Generation (RAG) for knowledge base operations. You can configure RAG parameters in `~/.nanobot/config.json` under the `agents.defaults` section:
+
+```json
+{
+  "agents": {
+    "defaults": {
+      // ... existing agent configuration ...
+      
+      // RAG Configuration
+      "embedding_model": "~/.nanobot/models/models--BAAI--bge-large-zh-v1.5",
+      "chunk_size": 500,
+      "chunk_overlap": 100,
+      "top_k": 5,
+      "similarity_threshold": 0.0,
+      "batch_size": 32,
+      "timeout": 5,
+      "rerank_model_path": "",
+      "rerank_threshold": 0.8
+    }
+  }
+}
+```
+
+### RAG Configuration Parameters
+
+- **embedding_model**: Path to the embedding model directory
+- **chunk_size**: Text chunk size in characters (default: 500)
+- **chunk_overlap**: Text chunk overlap size in characters (default: 100)
+- **top_k**: Number of results to return in retrieval (default: 5)
+- **similarity_threshold**: Minimum similarity score threshold (default: 0.0)
+- **batch_size**: Batch size for vectorization operations (default: 32)
+- **timeout**: Timeout in seconds for operations (default: 5)
+- **rerank_model_path**: Path to rerank model (optional)
+- **rerank_threshold**: Rerank threshold (0.0-1.0, default: 0.8)
+
+For a complete example, see [rag_config_example.json](rag_config_example.json).
 
 ## 📁 Project Structure
 

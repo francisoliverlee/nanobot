@@ -14,7 +14,7 @@ class RAGConfig:
     """
 
     # Embedding model configuration
-    embedding_model: str = "BAAI/bge-large-zh-v1.5"
+    embedding_model: str = ""
 
     # Text chunking configuration
     chunk_size: int = 500

@@ -1,4 +1,4 @@
-"""Web interface for nanobot."""
+"""Web interface for nanobot with intent classification."""
 
 from pathlib import Path
 
@@ -6,7 +6,9 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse
 from loguru import logger
 
-from nanobot.config import load_config
+from nanobot.agent import AgentLoop
+from nanobot.config import load_config, Config
+from nanobot.providers import LLMProvider
 
 
 def diagnose_knowledge_base(workspace_path: Path) -> dict:
@@ -37,7 +39,31 @@ def diagnose_knowledge_base(workspace_path: Path) -> dict:
 
             # 先查询知识库
             config = load_config()
-            rag_config = RAGConfig.from_env()
+            rag_config = RAGConfig()
+            
+            # 从config.json的agents.defaults中读取RAG配置
+            if hasattr(config.agents, 'defaults'):
+                defaults = config.agents.defaults
+                if hasattr(defaults, 'embedding_model'):
+                    rag_config.embedding_model = defaults.embedding_model
+                if hasattr(defaults, 'chunk_size'):
+                    rag_config.chunk_size = defaults.chunk_size
+                if hasattr(defaults, 'chunk_overlap'):
+                    rag_config.chunk_overlap = defaults.chunk_overlap
+                if hasattr(defaults, 'top_k'):
+                    rag_config.top_k = defaults.top_k
+                if hasattr(defaults, 'similarity_threshold'):
+                    rag_config.similarity_threshold = defaults.similarity_threshold
+                if hasattr(defaults, 'batch_size'):
+                    rag_config.batch_size = defaults.batch_size
+                if hasattr(defaults, 'timeout'):
+                    rag_config.timeout = defaults.timeout
+                if hasattr(defaults, 'rerank_model_path'):
+                    rag_config.rerank_model_path = defaults.rerank_model_path
+                if hasattr(defaults, 'rerank_threshold'):
+                    rag_config.rerank_threshold = defaults.rerank_threshold
+            
+            # 兼容旧的rerank配置位置
             if config.rerank.model_path:
                 rag_config.rerank_model_path = config.rerank.model_path
             if config.rerank.threshold > 0:
@@ -77,9 +103,6 @@ def diagnose_knowledge_base(workspace_path: Path) -> dict:
     return status
 
 
-from nanobot.cli.commands import webui
-
-
 class ConnectionManager:
     """Manage WebSocket connections."""
 
@@ -111,20 +134,22 @@ web_app = FastAPI(
 manager = ConnectionManager()
 
 # Global instances for provider and agent_loop
-provider = None
-agent_loop = None
+provider: LLMProvider = None
+agent_loop: AgentLoop = None
+config: Config = None
 
 
 def initialize_webui_resources():
     """Initialize resources for webui."""
-    global provider, agent_loop
+    global provider, agent_loop, config
     from nanobot.config.loader import load_config
     from nanobot.bus.queue import MessageBus
     from nanobot.agent.loop import AgentLoop
     from nanobot.providers.litellm_provider import LiteLLMProvider
 
-    config = load_config()
     bus = MessageBus()
+
+    config = load_config()
 
     # Create provider from config
     p = config.get_provider()
@@ -183,18 +208,40 @@ async def preview_knowledge_item(item_id: str = None, source_url: str = None, fi
         from nanobot.knowledge.store import ChromaKnowledgeStore
         from nanobot.knowledge.rag_config import RAGConfig
         import os
-        
+
         config = load_config()
-        rag_config = RAGConfig.from_env()
+        rag_config = RAGConfig()
         
-        # 从配置文件中加载 rerank 配置
+        # 从config.json的agents.defaults中读取RAG配置
+        if hasattr(config.agents, 'defaults'):
+            defaults = config.agents.defaults
+            if hasattr(defaults, 'embedding_model'):
+                rag_config.embedding_model = defaults.embedding_model
+            if hasattr(defaults, 'chunk_size'):
+                rag_config.chunk_size = defaults.chunk_size
+            if hasattr(defaults, 'chunk_overlap'):
+                rag_config.chunk_overlap = defaults.chunk_overlap
+            if hasattr(defaults, 'top_k'):
+                rag_config.top_k = defaults.top_k
+            if hasattr(defaults, 'similarity_threshold'):
+                rag_config.similarity_threshold = defaults.similarity_threshold
+            if hasattr(defaults, 'batch_size'):
+                rag_config.batch_size = defaults.batch_size
+            if hasattr(defaults, 'timeout'):
+                rag_config.timeout = defaults.timeout
+            if hasattr(defaults, 'rerank_model_path'):
+                rag_config.rerank_model_path = defaults.rerank_model_path
+            if hasattr(defaults, 'rerank_threshold'):
+                rag_config.rerank_threshold = defaults.rerank_threshold
+        
+        # 兼容旧的rerank配置位置
         if config.rerank.model_path:
             rag_config.rerank_model_path = config.rerank.model_path
         if config.rerank.threshold > 0:
             rag_config.rerank_threshold = config.rerank.threshold
-        
+
         store = ChromaKnowledgeStore(config.workspace_path, rag_config)
-        
+
         # 根据提供的参数获取文档内容
         if item_id:
             # 通过item_id获取知识条目的完整内容
@@ -222,13 +269,13 @@ async def preview_knowledge_item(item_id: str = None, source_url: str = None, fi
                     "status": "error",
                     "message": f"未找到ID为 {item_id} 的知识条目"
                 }
-                
+
         elif source_url:
             # 通过URL获取文档内容
             try:
                 # 这里可以实现URL内容抓取，暂时返回模拟内容
                 return {
-                    "status": "success", 
+                    "status": "success",
                     "message": "URL文档预览成功",
                     "source_url": source_url,
                     "content": f"URL文档内容预览:\n\n来源: {source_url}\n\n注意：URL内容抓取功能需要进一步实现，当前显示的是模拟内容。",
@@ -242,33 +289,33 @@ async def preview_knowledge_item(item_id: str = None, source_url: str = None, fi
                     "status": "error",
                     "message": f"获取URL内容失败: {str(e)}"
                 }
-                
+
         elif file_path:
             # 通过文件路径获取文档内容
             try:
                 # 安全检查：确保文件路径在工作空间内
                 workspace_path = str(config.workspace_path)
                 abs_file_path = os.path.abspath(file_path)
-                
+
                 if not abs_file_path.startswith(workspace_path):
                     return {
                         "status": "error",
                         "message": "文件路径超出工作空间范围，拒绝访问"
                     }
-                
+
                 if not os.path.exists(abs_file_path):
                     return {
                         "status": "error",
                         "message": f"文件不存在: {file_path}"
                     }
-                
+
                 # 读取文件内容
                 with open(abs_file_path, 'r', encoding='utf-8') as f:
                     content = f.read()
-                
+
                 return {
                     "status": "success",
-                    "message": "文件预览成功", 
+                    "message": "文件预览成功",
                     "file_path": file_path,
                     "content": content,
                     "metadata": {
@@ -292,7 +339,7 @@ async def preview_knowledge_item(item_id: str = None, source_url: str = None, fi
                 "status": "error",
                 "message": "请提供item_id、source_url或file_path参数"
             }
-            
+
     except Exception as e:
         return {
             "status": "error",
@@ -306,7 +353,7 @@ async def get_full_document_content(store, item_id: str):
         # 查找该知识条目所属的领域
         domain = None
         all_collections = store.chroma_client.list_collections()
-        
+
         for coll_info in all_collections:
             coll_name = coll_info.name
             if coll_name.startswith("knowledge_"):
@@ -317,52 +364,52 @@ async def get_full_document_content(store, item_id: str):
                         where={"item_id": item_id},
                         include=["documents", "metadatas"]
                     )
-                    
+
                     if results and results["ids"] and len(results["ids"]) > 0:
                         domain = coll_name.replace("knowledge_", "")
                         break
                 except Exception as e:
                     logger.warning(f"查询集合 {coll_name} 失败: {str(e)}")
                     continue
-        
+
         if not domain:
             return None
-        
+
         # 获取该知识条目的所有分块
         collection = store.chroma_client.get_collection(f"knowledge_{domain}")
         chunks = collection.get(
             where={"item_id": item_id},
             include=["documents", "metadatas"]
         )
-        
+
         if not chunks or not chunks["ids"]:
             return None
-        
+
         # 按 chunk_index 排序并合并内容
         chunk_data = []
         metadata = None
-        
+
         for i in range(len(chunks["ids"])):
             chunk_metadata = chunks["metadatas"][i]
             chunk_document = chunks["documents"][i]
             chunk_index = chunk_metadata.get("chunk_index", 0)
-            
+
             chunk_data.append({
                 "index": chunk_index,
                 "text": chunk_document,
                 "metadata": chunk_metadata
             })
-            
+
             # 使用第一个分块的元数据作为整体元数据
             if metadata is None:
                 metadata = chunk_metadata
-        
+
         # 按索引排序
         chunk_data.sort(key=lambda x: x["index"])
-        
+
         # 合并所有分块的文本
         full_content = " ".join(chunk["text"] for chunk in chunk_data)
-        
+
         return {
             "content": full_content,
             "title": metadata.get("title", ""),
@@ -376,7 +423,7 @@ async def get_full_document_content(store, item_id: str):
             "source": metadata.get("source", ""),
             "priority": metadata.get("priority", 1)
         }
-        
+
     except Exception as e:
         logger.error(f"获取完整文档内容失败: {str(e)}")
         return None
@@ -395,12 +442,65 @@ async def websocket_endpoint(websocket: WebSocket):
         manager.disconnect(websocket)
 
 
+async def classify_user_intent(user_input: str, websocket: WebSocket) -> str:
+    """
+    使用LLM对用户意图进行分类
+    
+    Args:
+        user_input: 用户输入
+        websocket: WebSocket连接
+        
+    Returns:
+        'A' 表示问答类，'B' 表示排查类
+    """
+    intent_prompt = f"""判断用户意图，仅回复 A 或 B。
+A: 问答类（查定义、查配置、静态知识）
+B: 排查类（报错、连不上、检查状态、超时，查错, 定位, 导致, 原因, 为什么, 怎么办, 如何）
+C: 查询类 (查pod、查组件、查看、查询、查日志)
+问题：{user_input}"""
+
+    try:
+        await websocket.send_text("🧠 正在识别用户意图...\n")
+
+        # 使用全局的provider进行意图分类
+        if not provider:
+            await websocket.send_text("⚠️ LLM服务未初始化，跳过意图识别\n")
+            return "A"  # 默认为问答类
+
+        # 调用LLM进行意图分类
+        response = await provider.chat(
+            messages=[{"role": "user", "content": intent_prompt}],
+            model=config.agents.defaults.model,
+            max_tokens=10,  # 只需要返回A或B
+            temperature=0.1  # 低温度确保稳定输出
+        )
+
+        intent = response.content.strip().upper()
+
+        # 验证返回结果
+        if intent not in ['A', 'B', 'C']:
+            await websocket.send_text(f"⚠️ 意图识别结果异常: {intent}，默认为问答类\n")
+            return "A"
+
+        intent_type = "问答类"
+        if intent == "B":
+            intent_type = "排查类"
+        if intent == "C":
+            intent_type = "查询类"
+
+        await websocket.send_text(f"✅ 用户意图识别: {intent_type} ({intent})\n\n")
+
+        return intent
+
+    except Exception as e:
+        logger.error(f"意图识别失败: {e}")
+        await websocket.send_text(f"⚠️ 意图识别失败: {str(e)}，无法回答\n")
+        return "UNKNOWN"  # 出错时默认为未知类
+
+
 async def process_user_message_streaming(user_input: str, websocket: WebSocket):
     """Process user message with real-time streaming output."""
     import time
-    import json
-    from nanobot.config.loader import load_config
-    from nanobot.knowledge.store import ChromaKnowledgeStore
 
     start_time = time.time()
 
@@ -412,20 +512,60 @@ async def process_user_message_streaming(user_input: str, websocket: WebSocket):
     # Send initial processing message
     await websocket.send_text("🤖 AI Agent is processing your request...\n\n")
 
+    # 第一步：用户意图识别
+    user_intent = await classify_user_intent(user_input, websocket)
+
+    # 根据意图决定处理流程
+    if user_intent == "A":
+        # 问答类：查询知识库
+        await process_qa_intent(user_input, websocket, start_time)
+    elif user_intent == "B" or user_intent == "C":
+        # 排查类、查询类：直接调用LLM
+        await process_troubleshooting_intent(user_input, websocket, start_time)
+
+
+async def process_qa_intent(user_input: str, websocket: WebSocket, start_time: float):
+    """处理问答类意图：优先查询知识库"""
+    import time
+    import json
+    from nanobot.config.loader import load_config
+    from nanobot.knowledge.store import ChromaKnowledgeStore
+
     try:
-        # 先查询知识库
         config = load_config()
-        
-        # 创建 RAGConfig 并从配置文件加载 rerank 设置
+
+        # 创建 RAGConfig 并从配置文件加载完整配置
         from nanobot.knowledge.rag_config import RAGConfig
-        rag_config = RAGConfig.from_env()
+        rag_config = RAGConfig()
         
-        # 从配置文件中加载 rerank 配置
+        # 从config.json的agents.defaults中读取RAG配置
+        if hasattr(config.agents, 'defaults'):
+            defaults = config.agents.defaults
+            if hasattr(defaults, 'embedding_model'):
+                rag_config.embedding_model = defaults.embedding_model
+            if hasattr(defaults, 'chunk_size'):
+                rag_config.chunk_size = defaults.chunk_size
+            if hasattr(defaults, 'chunk_overlap'):
+                rag_config.chunk_overlap = defaults.chunk_overlap
+            if hasattr(defaults, 'top_k'):
+                rag_config.top_k = defaults.top_k
+            if hasattr(defaults, 'similarity_threshold'):
+                rag_config.similarity_threshold = defaults.similarity_threshold
+            if hasattr(defaults, 'batch_size'):
+                rag_config.batch_size = defaults.batch_size
+            if hasattr(defaults, 'timeout'):
+                rag_config.timeout = defaults.timeout
+            if hasattr(defaults, 'rerank_model_path'):
+                rag_config.rerank_model_path = defaults.rerank_model_path
+            if hasattr(defaults, 'rerank_threshold'):
+                rag_config.rerank_threshold = defaults.rerank_threshold
+        
+        # 兼容旧的rerank配置位置
         if config.rerank.model_path:
             rag_config.rerank_model_path = config.rerank.model_path
         if config.rerank.threshold > 0:
             rag_config.rerank_threshold = config.rerank.threshold
-            
+
         store = ChromaKnowledgeStore(config.workspace_path, rag_config)
     except RuntimeError as e:
         # CrossEncoder 初始化失败
@@ -453,7 +593,7 @@ async def process_user_message_streaming(user_input: str, websocket: WebSocket):
         knowledge_results = search_result
         scores = []
 
-    # 检查是否有结果且重排序得分超过70
+    # 问答类处理：有结果就返回，没结果回答"不知道"
     if knowledge_results and scores:
         # 获取重排序得分最高的结果
         top_score = scores[0].get('rerank_score', 0)
@@ -463,30 +603,30 @@ async def process_user_message_streaming(user_input: str, websocket: WebSocket):
 
         # 格式化知识库结果，包含预览信息
         top_item = knowledge_results[0]
-        
+
         # 添加预览信息
         preview_links = []
-        
+
         # 检查文档链接
         if hasattr(top_item, 'source_url') and top_item.source_url:
             preview_links.append(f"📄 文档链接: {top_item.source_url}")
-        
+
         # 检查文件路径
         if hasattr(top_item, 'file_path') and top_item.file_path:
             preview_links.append(f"📁 文件路径: {top_item.file_path}")
-        
+
         # 检查是否可预览
         if hasattr(top_item, 'preview_available') and top_item.preview_available:
             preview_links.append("🔍 支持预览")
-        
+
         # 添加知识条目ID用于预览
         if hasattr(top_item, 'id') and top_item.id:
             preview_links.append(f"🆔 条目ID: {top_item.id}")
-        
+
         preview_info = ""
         if preview_links:
             preview_info = f"\n**预览信息**: {' | '.join(preview_links)}"
-        
+
         # 格式化知识库结果
         formatted_result = f"""### 1. {top_item.title}
 **Domain**: {top_item.domain} | **Category**: {top_item.category} | **Priority**: {top_item.priority}
@@ -497,11 +637,11 @@ async def process_user_message_streaming(user_input: str, websocket: WebSocket):
 
 ---
 """
-        
+
         # 构建预览项目数组（去重逻辑：相同文件只显示一个预览按钮）
         preview_items = []
         seen_files = set()  # 用于去重
-        
+
         # 优先级1：文件路径预览（如果有本地文件路径）
         if hasattr(top_item, 'file_path') and top_item.file_path:
             file_key = top_item.file_path
@@ -513,7 +653,7 @@ async def process_user_message_streaming(user_input: str, websocket: WebSocket):
                     'path': top_item.file_path
                 })
                 seen_files.add(file_key)
-        
+
         # 优先级2：文档链接预览（如果没有本地文件路径，但有URL）
         elif hasattr(top_item, 'source_url') and top_item.source_url:
             url_key = top_item.source_url
@@ -525,9 +665,10 @@ async def process_user_message_streaming(user_input: str, websocket: WebSocket):
                     'url': top_item.source_url
                 })
                 seen_files.add(url_key)
-        
+
         # 优先级3：知识条目内容预览（如果既没有文件路径也没有URL，但可预览）
-        elif hasattr(top_item, 'id') and top_item.id and hasattr(top_item, 'preview_available') and top_item.preview_available:
+        elif hasattr(top_item, 'id') and top_item.id and hasattr(top_item,
+                                                                 'preview_available') and top_item.preview_available:
             item_key = f"item_{top_item.id}"
             if item_key not in seen_files:
                 preview_items.append({
@@ -537,9 +678,8 @@ async def process_user_message_streaming(user_input: str, websocket: WebSocket):
                     'item_id': top_item.id
                 })
                 seen_files.add(item_key)
-        
+
         # 通过JSON格式发送知识库结果，这样前端可以解析预览信息
-        import json
         knowledge_message = {
             'type': 'stream_chunk',
             'content_type': 'knowledge',
@@ -551,29 +691,36 @@ async def process_user_message_streaming(user_input: str, websocket: WebSocket):
             'timestamp': time.time(),
             'duration_from_start': round(time.time() - start_time, 3)
         }
-        
+
         await websocket.send_text(json.dumps(knowledge_message, ensure_ascii=False))
 
-        # 从配置中获取重排序阈值
-        rerank_threshold = config.rerank.threshold if config.rerank.threshold > 0 else 80
+        # 问答类：直接输出知识库结果，不再调用LLM
+        await websocket.send_text("📚 知识库答案：\n")
+        await websocket.send_text(f"{knowledge_results[0].content}\n\n")
 
-        # 检查重排序得分是否超过阈值
-        if top_score >= rerank_threshold:
-            await websocket.send_text(f"🚀 重排序得分超过{rerank_threshold}，直接输出知识库结果\n\n")
-            # 直接输出知识库结果
-            await websocket.send_text("📚 知识库答案：\n")
-            await websocket.send_text(f"{knowledge_results[0].content}\n\n")
-
-            # 发送处理时间
-            end_time = time.time()
-            total_processing_time = round(end_time - start_time, 1)
-            await websocket.send_text(f"\n---\n*总耗时: {total_processing_time}秒*\n")
-            return
-        else:
-            # 得分低于阈值，继续原始逻辑，让LLM处理
-            await websocket.send_text(f"🤖 重排序得分低于{rerank_threshold}，让AI分析知识库结果...\n\n")
+        # 发送处理时间
+        end_time = time.time()
+        total_processing_time = round(end_time - start_time, 1)
+        await websocket.send_text(f"\n---\n*总耗时: {total_processing_time}秒*\n")
+        return
     else:
+        # 问答类：没有找到知识库结果，回答"不知道"
         await websocket.send_text("📭 知识库中没有找到相关结果\n\n")
+        await websocket.send_text("🤖 抱歉，我在知识库中没有找到相关信息，无法回答您的问题。\n\n")
+
+        # 发送处理时间
+        end_time = time.time()
+        total_processing_time = round(end_time - start_time, 1)
+        await websocket.send_text(f"\n---\n*总耗时: {total_processing_time}秒*\n")
+        return
+
+
+async def process_troubleshooting_intent(user_input: str, websocket: WebSocket, start_time: float):
+    """处理排查类意图：直接调用LLM"""
+    import time
+    import json
+
+    await websocket.send_text("🔧 检测到排查类问题，直接调用AI分析...\n\n")
 
     # Record LLM start time
     llm_start_time = time.time()
@@ -582,67 +729,54 @@ async def process_user_message_streaming(user_input: str, websocket: WebSocket):
     async def stream_callback(context_info: dict):
         """流式输出回调函数，按类型分类显示内容，并统计每次返回的耗时"""
         content = context_info.get('content', '')
-        if not content.strip():
-            return
 
-        # 记录当前回调的时间
+        # 获取回调时间和计算耗时
         callback_time = time.time()
-
-        # 根据内容类型添加分类标记
-        content_type = 'reasoning'
-        if context_info.get('is_final_answer', False):
-            content_type = 'answer'
-        elif context_info.get('is_tool_call', False):
-            content_type = 'tool'
-        elif context_info.get('is_iteration_start', False):
-            content_type = 'iteration'
-        elif context_info.get('is_knowledge_query', False):
-            content_type = 'knowledge'
-
-        # 计算从开始处理到当前回调的耗时
         current_duration = round(callback_time - start_time, 3)
 
-        # 获取迭代计数信息
+        # 获取迭代计数
         iteration_count = context_info.get('iteration_count', 0)
 
-        # 为不同类型的内容添加适当的标记，避免重复信息
-        if content_type == 'iteration':
-            # 迭代开始信息
-            enhanced_content = f"🔄 第{iteration_count}次迭代开始\n"
-        elif content_type == 'tool':
-            # 工具执行信息 - 只添加状态标记，不重复添加耗时信息
-            tool_status = context_info.get('tool_status', '')
-            if tool_status == 'start':
-                enhanced_content = f"🔧 开始执行工具\n{content}"
-            elif tool_status == 'completed':
-                enhanced_content = f"✅ 工具执行完成\n{content}"
-            elif tool_status == 'error':
-                enhanced_content = f"❌ 工具执行失败\n{content}"
-            else:
-                enhanced_content = f"🔧 工具执行\n{content}"
-        elif content_type == 'knowledge':
-            # 知识库查询信息
-            knowledge_status = context_info.get('knowledge_status', '')
-            if knowledge_status == 'start':
-                enhanced_content = f"📚 {content}"
-            elif knowledge_status == 'searching':
-                enhanced_content = f"🔍 {content}"
-            elif knowledge_status == 'success':
-                knowledge_count = context_info.get('knowledge_count', 0)
-                enhanced_content = f"✅ {content}"
-            elif knowledge_status == 'no_results':
-                enhanced_content = f"📭 {content}"
-            elif knowledge_status == 'error':
-                enhanced_content = f"❌ {content}"
-            elif knowledge_status == 'skipped':
-                enhanced_content = f"⚠️ {content}"
-            else:
-                enhanced_content = f"📚 {content}"
-        else:
-            # 其他类型内容 - 直接使用原始内容，不添加额外信息
-            enhanced_content = content
+        # 根据内容类型进行分类处理
+        content_type = 'text'  # 默认为文本类型
+        enhanced_content = content
 
-        # 发送带类型标记和耗时统计的内容
+        # 检测是否为工具调用
+        if context_info.get('is_tool_call') or 'tool_name' in context_info:
+            content_type = 'tool'
+            tool_name = context_info.get('tool_name', '')
+            tool_status = context_info.get('tool_status', '')
+
+            if tool_status == 'start':
+                enhanced_content = f"🔧 调用工具: {tool_name}"
+            elif tool_status == 'success':
+                enhanced_content = f"✅ 工具执行成功: {tool_name}"
+            elif tool_status == 'error':
+                enhanced_content = f"❌ 工具执行失败: {tool_name}"
+            else:
+                enhanced_content = content
+
+        # 检测是否为推理过程
+        elif context_info.get('is_reasoning'):
+            content_type = 'reasoning'
+            enhanced_content = f"🤔 {content}"
+
+        # 检测是否为知识库查询
+        elif context_info.get('is_knowledge_query'):
+            content_type = 'knowledge'
+            enhanced_content = f"📚 {content}"
+
+        # 检测是否为最终答案
+        elif context_info.get('is_final_answer'):
+            content_type = 'final_answer'
+            enhanced_content = f"💡 {content}"
+
+        # 检测是否为迭代开始
+        elif context_info.get('is_iteration_start'):
+            content_type = 'iteration'
+            enhanced_content = f"🔄 第 {iteration_count} 轮思考: {content}"
+
+        # 构建消息数据
         message_data = {
             'type': 'stream_chunk',
             'content_type': content_type,
@@ -728,5 +862,12 @@ async def process_user_message(user_input: str) -> str:
         return f"No response from agent.\n\n---\n*总耗时: {total_processing_time}秒 | LLM执行耗时: {llm_execution_time}秒*"
 
 
-if __name__ == "__main__":
-    webui()
+@web_app.post("/api/chat")
+async def chat_endpoint(message: dict):
+    """Handle chat API requests."""
+    user_input = message.get("message", "")
+    if not user_input:
+        return {"error": "No message provided"}
+
+    response = await process_user_message(user_input)
+    return {"response": response}

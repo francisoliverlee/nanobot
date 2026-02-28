@@ -18,12 +18,34 @@ def main():
     # Initialize knowledge store with proper configuration
     workspace = Path("workspace")
     
-    # 创建 RAGConfig 并从配置文件加载 rerank 设置
-    rag_config = RAGConfig.from_env()
+    # 创建 RAGConfig 并从配置文件加载配置
+    rag_config = RAGConfig()
     
-    # 如果环境变量中没有rerank配置，尝试从config.json加载
+    # 从config.json的agents.defaults中读取RAG配置
     try:
         config = load_config()
+        if hasattr(config.agents, 'defaults'):
+            defaults = config.agents.defaults
+            if hasattr(defaults, 'embedding_model'):
+                rag_config.embedding_model = defaults.embedding_model
+            if hasattr(defaults, 'chunk_size'):
+                rag_config.chunk_size = defaults.chunk_size
+            if hasattr(defaults, 'chunk_overlap'):
+                rag_config.chunk_overlap = defaults.chunk_overlap
+            if hasattr(defaults, 'top_k'):
+                rag_config.top_k = defaults.top_k
+            if hasattr(defaults, 'similarity_threshold'):
+                rag_config.similarity_threshold = defaults.similarity_threshold
+            if hasattr(defaults, 'batch_size'):
+                rag_config.batch_size = defaults.batch_size
+            if hasattr(defaults, 'timeout'):
+                rag_config.timeout = defaults.timeout
+            if hasattr(defaults, 'rerank_model_path'):
+                rag_config.rerank_model_path = defaults.rerank_model_path
+            if hasattr(defaults, 'rerank_threshold'):
+                rag_config.rerank_threshold = defaults.rerank_threshold
+        
+        # 兼容旧的rerank配置位置
         if config.rerank.model_path:
             rag_config.rerank_model_path = config.rerank.model_path
         if config.rerank.threshold > 0:

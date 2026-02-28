@@ -24,7 +24,7 @@ class EmbeddingModelError(Exception):
 class VectorEmbedder:
     """文本向量化器，使用本地 Embedding 模型."""
 
-    def __init__(self, model_name: str = "BAAI/bge-large-zh-v1.5"):
+    def __init__(self, model_name: str):
         """初始化向量化器.
         
         Args:
