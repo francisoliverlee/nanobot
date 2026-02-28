@@ -1,11 +1,8 @@
 """Text vectorization using local embedding models."""
-
-import logging
 from typing import List
 
+from loguru import logger
 from sentence_transformers import SentenceTransformer
-
-logger = logging.getLogger("nanobot.knowledge.vector_embedder")
 
 
 class EmbeddingModelError(Exception):

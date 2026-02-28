@@ -172,8 +172,6 @@ class AgentDefaults(BaseModel):
     similarity_threshold: float = 0.0
     batch_size: int = 32
     timeout: int = 5
-    rerank_model_path: str = ""
-    rerank_threshold: float = 0.8
 
 
 class AgentsConfig(BaseModel):

@@ -58,16 +58,12 @@ def diagnose_knowledge_base(workspace_path: Path) -> dict:
                     rag_config.batch_size = defaults.batch_size
                 if hasattr(defaults, 'timeout'):
                     rag_config.timeout = defaults.timeout
-                if hasattr(defaults, 'rerank_model_path'):
-                    rag_config.rerank_model_path = defaults.rerank_model_path
-                if hasattr(defaults, 'rerank_threshold'):
-                    rag_config.rerank_threshold = defaults.rerank_threshold
-            
-            # 兼容旧的rerank配置位置
-            if config.rerank.model_path:
-                rag_config.rerank_model_path = config.rerank.model_path
-            if config.rerank.threshold > 0:
-                rag_config.rerank_threshold = config.rerank.threshold
+            # 从rerank配置中读取
+            if hasattr(config, 'rerank'):
+                if hasattr(config.rerank, 'model_path') and config.rerank.model_path:
+                    rag_config.rerank_model_path = config.rerank.model_path
+                if hasattr(config.rerank, 'threshold') and config.rerank.threshold > 0:
+                    rag_config.rerank_threshold = config.rerank.threshold
 
             store = ChromaKnowledgeStore(workspace_path, rag_config)
             status["available"] = True
@@ -229,16 +225,13 @@ async def preview_knowledge_item(item_id: str = None, source_url: str = None, fi
                 rag_config.batch_size = defaults.batch_size
             if hasattr(defaults, 'timeout'):
                 rag_config.timeout = defaults.timeout
-            if hasattr(defaults, 'rerank_model_path'):
-                rag_config.rerank_model_path = defaults.rerank_model_path
-            if hasattr(defaults, 'rerank_threshold'):
-                rag_config.rerank_threshold = defaults.rerank_threshold
         
-        # 兼容旧的rerank配置位置
-        if config.rerank.model_path:
-            rag_config.rerank_model_path = config.rerank.model_path
-        if config.rerank.threshold > 0:
-            rag_config.rerank_threshold = config.rerank.threshold
+        # 从rerank配置中读取
+        if hasattr(config, 'rerank'):
+            if hasattr(config.rerank, 'model_path') and config.rerank.model_path:
+                rag_config.rerank_model_path = config.rerank.model_path
+            if hasattr(config.rerank, 'threshold') and config.rerank.threshold > 0:
+                rag_config.rerank_threshold = config.rerank.threshold
 
         store = ChromaKnowledgeStore(config.workspace_path, rag_config)
 
@@ -555,16 +548,13 @@ async def process_qa_intent(user_input: str, websocket: WebSocket, start_time: f
                 rag_config.batch_size = defaults.batch_size
             if hasattr(defaults, 'timeout'):
                 rag_config.timeout = defaults.timeout
-            if hasattr(defaults, 'rerank_model_path'):
-                rag_config.rerank_model_path = defaults.rerank_model_path
-            if hasattr(defaults, 'rerank_threshold'):
-                rag_config.rerank_threshold = defaults.rerank_threshold
         
-        # 兼容旧的rerank配置位置
-        if config.rerank.model_path:
-            rag_config.rerank_model_path = config.rerank.model_path
-        if config.rerank.threshold > 0:
-            rag_config.rerank_threshold = config.rerank.threshold
+        # 从rerank配置中读取
+        if hasattr(config, 'rerank'):
+            if hasattr(config.rerank, 'model_path') and config.rerank.model_path:
+                rag_config.rerank_model_path = config.rerank.model_path
+            if hasattr(config.rerank, 'threshold') and config.rerank.threshold > 0:
+                rag_config.rerank_threshold = config.rerank.threshold
 
         store = ChromaKnowledgeStore(config.workspace_path, rag_config)
     except RuntimeError as e:

@@ -36,16 +36,12 @@ def _create_chroma_store_with_config(workspace: Path):
             rag_config.batch_size = defaults.batch_size
         if hasattr(defaults, 'timeout'):
             rag_config.timeout = defaults.timeout
-        if hasattr(defaults, 'rerank_model_path'):
-            rag_config.rerank_model_path = defaults.rerank_model_path
-        if hasattr(defaults, 'rerank_threshold'):
-            rag_config.rerank_threshold = defaults.rerank_threshold
-    
-    # 兼容旧的rerank配置位置
-    if config.rerank.model_path:
-        rag_config.rerank_model_path = config.rerank.model_path
-    if config.rerank.threshold > 0:
-        rag_config.rerank_threshold = config.rerank.threshold
+    # 从rerank配置中读取
+    if hasattr(config, 'rerank'):
+        if hasattr(config.rerank, 'model_path') and config.rerank.model_path:
+            rag_config.rerank_model_path = config.rerank.model_path
+        if hasattr(config.rerank, 'threshold') and config.rerank.threshold > 0:
+            rag_config.rerank_threshold = config.rerank.threshold
     
     return ChromaKnowledgeStore(workspace, rag_config)
 

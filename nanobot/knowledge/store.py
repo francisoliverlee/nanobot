@@ -57,7 +57,7 @@ class KnowledgeItem:
     updated_at: str
     source: str = "user"  # "user" or "system"
     priority: int = 1  # 1-5, higher is more important
-    
+
     # 新增文档预览相关字段
     source_url: str = ""  # 原文档链接
     file_path: str = ""  # 本地文件路径
@@ -113,8 +113,8 @@ class ChromaKnowledgeStore:
         self.chunker = TextChunker(
             chunk_size=self.config.chunk_size,
             chunk_overlap=self.config.chunk_overlap,
-            smart_chunking=True,  # 启用智能分割
-            preserve_structure=True  # 保持文档结构
+            smart_chunking=False,  # 启用智能分割
+            preserve_structure=False  # 保持文档结构
         )
         self.chroma_client = None
         self._init_chroma()
@@ -290,7 +290,7 @@ class ChromaKnowledgeStore:
             filtered_results = []
             for i, score in enumerate(scaled_scores):
                 original_score = results[i].get('similarity_score', 0)
-                
+
                 # 只保留超过阈值的结果
                 if score >= rerank_threshold:
                     results[i]['rerank_score'] = score
@@ -299,13 +299,14 @@ class ChromaKnowledgeStore:
 
             # 按重排序分数降序排序
             filtered_results.sort(key=lambda x: x['rerank_score'], reverse=True)
-            
+
             # 更新results为过滤后的结果
             results = filtered_results
 
             elapsed = (datetime.now() - start_time).total_seconds()
             logger.info(f"✅ 重排序完成，耗时: {elapsed:.3f}秒")
-            logger.info(f"   - 原始结果数: {len([r for r in results if 'rerank_score' in r]) + len([r for r in results if 'rerank_score' not in r])}")
+            logger.info(
+                f"   - 原始结果数: {len([r for r in results if 'rerank_score' in r]) + len([r for r in results if 'rerank_score' not in r])}")
             logger.info(f"   - 过滤后结果数: {len(results)} (阈值: {rerank_threshold}分)")
 
             # 记录前3个结果的得分

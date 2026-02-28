@@ -931,9 +931,7 @@ nanobot supports Retrieval-Augmented Generation (RAG) for knowledge base operati
       "top_k": 5,
       "similarity_threshold": 0.0,
       "batch_size": 32,
-      "timeout": 5,
-      "rerank_model_path": "",
-      "rerank_threshold": 0.8
+      "timeout": 5
     }
   }
 }
@@ -948,8 +946,6 @@ nanobot supports Retrieval-Augmented Generation (RAG) for knowledge base operati
 - **similarity_threshold**: Minimum similarity score threshold (default: 0.0)
 - **batch_size**: Batch size for vectorization operations (default: 32)
 - **timeout**: Timeout in seconds for operations (default: 5)
-- **rerank_model_path**: Path to rerank model (optional)
-- **rerank_threshold**: Rerank threshold (0.0-1.0, default: 0.8)
 
 For a complete example, see [rag_config_example.json](rag_config_example.json).
 

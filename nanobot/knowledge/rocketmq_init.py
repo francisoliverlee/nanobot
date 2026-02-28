@@ -36,9 +36,6 @@ def get_rocketmq_content_files(base_path: Path) -> List[Path]:
 
 def parse_markdown_file(file_path: Path) -> Dict[str, Any]:
     """Parse markdown file and extract title, content, and metadata."""
-    import logging
-    logger = logging.getLogger("nanobot.knowledge.rocketmq_init")
-
     if not file_path.exists():
         logger.warning(f"⚠️  文件不存在: {file_path}")
         return {}
@@ -238,9 +235,6 @@ class RocketMQKnowledgeInitializer:
             如果是 ChromaKnowledgeStore: (item_count, chunk_count)
             如果是其他存储类型: item_count
         """
-        import logging
-        logger = logging.getLogger("nanobot.knowledge.rocketmq_init")
-
         logger.warning("🔄 强制重新初始化 RocketMQ 知识库")
 
         # 强制重新初始化 RocketMQ 知识库
@@ -328,9 +322,6 @@ class RocketMQKnowledgeInitializer:
 
     def _initialize_from_filesystem(self, categories: Dict[str, List[Dict]]) -> None:
         """Initialize knowledge from file system categories."""
-        import logging
-        logger = logging.getLogger("nanobot.knowledge.rocketmq_init")
-
         logger.info("📝 开始处理知识文件...")
 
         for category_name, knowledge_items in categories.items():
@@ -560,16 +551,12 @@ def initialize_rocketmq_knowledge(workspace: Path) -> int | tuple[int, int]:
                 rag_config.batch_size = defaults.batch_size
             if hasattr(defaults, 'timeout'):
                 rag_config.timeout = defaults.timeout
-            if hasattr(defaults, 'rerank_model_path'):
-                rag_config.rerank_model_path = defaults.rerank_model_path
-            if hasattr(defaults, 'rerank_threshold'):
-                rag_config.rerank_threshold = defaults.rerank_threshold
-        
-        # 兼容旧的rerank配置位置
-        if config.rerank.model_path:
-            rag_config.rerank_model_path = config.rerank.model_path
-        if config.rerank.threshold > 0:
-            rag_config.rerank_threshold = config.rerank.threshold
+        # 从rerank配置中读取
+        if hasattr(config, 'rerank'):
+            if hasattr(config.rerank, 'model_path') and config.rerank.model_path:
+                rag_config.rerank_model_path = config.rerank.model_path
+            if hasattr(config.rerank, 'threshold') and config.rerank.threshold > 0:
+                rag_config.rerank_threshold = config.rerank.threshold
     except Exception:
         pass  # 使用默认配置
     

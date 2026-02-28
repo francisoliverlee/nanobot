@@ -14,9 +14,7 @@
       "top_k": 5,
       "similarity_threshold": 0.0,
       "batch_size": 32,
-      "timeout": 5,
-      "rerank_model_path": "",
-      "rerank_threshold": 0.8
+      "timeout": 5
     }
   },
   "providers": {
