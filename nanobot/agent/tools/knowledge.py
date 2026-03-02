@@ -7,43 +7,14 @@ from typing import Any, List, Optional
 
 from nanobot.agent.tools.base import Tool
 from nanobot.config.loader import load_config
+from nanobot.knowledge.store_factory import get_chroma_store
 from nanobot.knowledge.store import DomainKnowledgeManager
 
 
 def _create_chroma_store_with_config(workspace: Path):
-    """创建带有正确配置的 ChromaKnowledgeStore 实例."""
-    from nanobot.knowledge.store import ChromaKnowledgeStore
-    from nanobot.knowledge.rag_config import RAGConfig
-    
-    # 加载配置
+    """创建或复用带有正确配置的 ChromaKnowledgeStore 实例."""
     config = load_config()
-    rag_config = RAGConfig()
-    
-    # 从config.json的agents.defaults中读取RAG配置
-    if hasattr(config.agents, 'defaults'):
-        defaults = config.agents.defaults
-        if hasattr(defaults, 'embedding_model'):
-            rag_config.embedding_model = defaults.embedding_model
-        if hasattr(defaults, 'chunk_size'):
-            rag_config.chunk_size = defaults.chunk_size
-        if hasattr(defaults, 'chunk_overlap'):
-            rag_config.chunk_overlap = defaults.chunk_overlap
-        if hasattr(defaults, 'top_k'):
-            rag_config.top_k = defaults.top_k
-        if hasattr(defaults, 'similarity_threshold'):
-            rag_config.similarity_threshold = defaults.similarity_threshold
-        if hasattr(defaults, 'batch_size'):
-            rag_config.batch_size = defaults.batch_size
-        if hasattr(defaults, 'timeout'):
-            rag_config.timeout = defaults.timeout
-    # 从rerank配置中读取
-    if hasattr(config, 'rerank'):
-        if hasattr(config.rerank, 'model_path') and config.rerank.model_path:
-            rag_config.rerank_model_path = config.rerank.model_path
-        if hasattr(config.rerank, 'threshold') and config.rerank.threshold > 0:
-            rag_config.rerank_threshold = config.rerank.threshold
-    
-    return ChromaKnowledgeStore(workspace, rag_config)
+    return get_chroma_store(workspace, cfg=config)
 
 
 class KnowledgeSearchTool(Tool):

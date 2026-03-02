@@ -1039,14 +1039,9 @@ class AgentLoop:
         if not matched_domain:
             matched_domain = "general"
 
-        # 提取查询关键词：移除领域关键词，保留核心问题
-        query_keywords = input_lower
-        for keyword in domain_keywords.get(matched_domain, []):
-            query_keywords = query_keywords.replace(keyword, "")
-
         # 清理查询关键词：移除标点符号和多余空格
         import re
-        query_keywords = re.sub(r'[^\w\s]', ' ', query_keywords)
+        query_keywords = re.sub(r'[^\w\s]', ' ', input_lower)
         query_keywords = ' '.join(query_keywords.split())
 
         # 如果查询关键词为空，使用原始输入的前20个字符

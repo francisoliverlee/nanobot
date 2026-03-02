@@ -7,15 +7,14 @@ from fastapi.responses import HTMLResponse
 from loguru import logger
 
 from nanobot.agent import AgentLoop
-from nanobot.config import load_config, Config
+from nanobot.config import Config
+from nanobot.knowledge.store_factory import get_chroma_store
 from nanobot.providers import LLMProvider
 
 
 def diagnose_knowledge_base(workspace_path: Path) -> dict:
     """诊断知识库状态."""
     try:
-        from nanobot.knowledge.store import ChromaKnowledgeStore
-
         # 检查知识库目录
         knowledge_dir = workspace_path / "knowledge"
         chroma_dir = knowledge_dir / "chroma_db"
@@ -35,37 +34,7 @@ def diagnose_knowledge_base(workspace_path: Path) -> dict:
 
         # 尝试初始化ChromaKnowledgeStore
         try:
-            from nanobot.knowledge.rag_config import RAGConfig
-
-            # 先查询知识库
-            config = load_config()
-            rag_config = RAGConfig()
-            
-            # 从config.json的agents.defaults中读取RAG配置
-            if hasattr(config.agents, 'defaults'):
-                defaults = config.agents.defaults
-                if hasattr(defaults, 'embedding_model'):
-                    rag_config.embedding_model = defaults.embedding_model
-                if hasattr(defaults, 'chunk_size'):
-                    rag_config.chunk_size = defaults.chunk_size
-                if hasattr(defaults, 'chunk_overlap'):
-                    rag_config.chunk_overlap = defaults.chunk_overlap
-                if hasattr(defaults, 'top_k'):
-                    rag_config.top_k = defaults.top_k
-                if hasattr(defaults, 'similarity_threshold'):
-                    rag_config.similarity_threshold = defaults.similarity_threshold
-                if hasattr(defaults, 'batch_size'):
-                    rag_config.batch_size = defaults.batch_size
-                if hasattr(defaults, 'timeout'):
-                    rag_config.timeout = defaults.timeout
-            # 从rerank配置中读取
-            if hasattr(config, 'rerank'):
-                if hasattr(config.rerank, 'model_path') and config.rerank.model_path:
-                    rag_config.rerank_model_path = config.rerank.model_path
-                if hasattr(config.rerank, 'threshold') and config.rerank.threshold > 0:
-                    rag_config.rerank_threshold = config.rerank.threshold
-
-            store = ChromaKnowledgeStore(workspace_path, rag_config)
+            store = get_chroma_store(workspace_path)
             status["available"] = True
 
             # 获取集合信息
@@ -201,39 +170,10 @@ async def preview_knowledge_item(item_id: str = None, source_url: str = None, fi
     """Preview knowledge item content."""
     try:
         from nanobot.config.loader import load_config
-        from nanobot.knowledge.store import ChromaKnowledgeStore
-        from nanobot.knowledge.rag_config import RAGConfig
         import os
 
         config = load_config()
-        rag_config = RAGConfig()
-        
-        # 从config.json的agents.defaults中读取RAG配置
-        if hasattr(config.agents, 'defaults'):
-            defaults = config.agents.defaults
-            if hasattr(defaults, 'embedding_model'):
-                rag_config.embedding_model = defaults.embedding_model
-            if hasattr(defaults, 'chunk_size'):
-                rag_config.chunk_size = defaults.chunk_size
-            if hasattr(defaults, 'chunk_overlap'):
-                rag_config.chunk_overlap = defaults.chunk_overlap
-            if hasattr(defaults, 'top_k'):
-                rag_config.top_k = defaults.top_k
-            if hasattr(defaults, 'similarity_threshold'):
-                rag_config.similarity_threshold = defaults.similarity_threshold
-            if hasattr(defaults, 'batch_size'):
-                rag_config.batch_size = defaults.batch_size
-            if hasattr(defaults, 'timeout'):
-                rag_config.timeout = defaults.timeout
-        
-        # 从rerank配置中读取
-        if hasattr(config, 'rerank'):
-            if hasattr(config.rerank, 'model_path') and config.rerank.model_path:
-                rag_config.rerank_model_path = config.rerank.model_path
-            if hasattr(config.rerank, 'threshold') and config.rerank.threshold > 0:
-                rag_config.rerank_threshold = config.rerank.threshold
-
-        store = ChromaKnowledgeStore(config.workspace_path, rag_config)
+        store = get_chroma_store(config.workspace_path, cfg=config)
 
         # 根据提供的参数获取文档内容
         if item_id:
@@ -446,11 +386,22 @@ async def classify_user_intent(user_input: str, websocket: WebSocket) -> str:
     Returns:
         'A' 表示问答类，'B' 表示排查类
     """
-    intent_prompt = f"""判断用户意图，仅回复 A 或 B。
-A: 问答类（查定义、查配置、静态知识）
-B: 排查类（报错、连不上、检查状态、超时，查错, 定位, 导致, 原因, 为什么, 怎么办, 如何）
-C: 查询类 (查pod、查组件、查看、查询、查日志)
-问题：在rocketmq，{user_input}"""
+    intent_prompt = f"""你是一个意图路由分类器。请判断用户问题的意图，仅回复单个字母（A、B）。
+    分类定义：
+    
+    A: 【知识问答】包括：概念定义、配置参数、架构原理、版本特性、【产品对比/选型/vs/区别】、最佳实践、静态文档查询。
+       (关键词示例：是什么、配置、vs、对比、区别、选型、教程、文档)
+
+    B: 【故障排查】包括：系统报错、异常堆栈、连接失败、超时、消息积压、状态检查、【诊断当前问题】、寻找故障原因。
+       (关键词示例：报错、错误、Exception、连不上、超时、积压、挂了、重启、诊断、为什么报错、怎么解决)
+       
+    判断规则：
+    1. 如果问题涉及两个产品的比较 (如 "vs", "对比", "区别")，必须归为 A 类。
+    2. 只有当用户明确描述了一个正在发生的故障或需要诊断具体错误时，才归为 B 类。
+    3. 如果只是询问一般性知识或原理，归为 A 类。
+    
+    用户问题：{user_input}
+    请只输出 A，B："""
 
     try:
         await websocket.send_text("🧠 正在识别用户意图...\n")
@@ -471,15 +422,13 @@ C: 查询类 (查pod、查组件、查看、查询、查日志)
         intent = response.content.strip().upper()
 
         # 验证返回结果
-        if intent not in ['A', 'B', 'C']:
+        if intent not in ['A', 'B']:
             await websocket.send_text(f"⚠️ 意图识别结果异常: {intent}，默认为问答类\n")
             return "A"
 
         intent_type = "问答类"
         if intent == "B":
             intent_type = "排查类"
-        if intent == "C":
-            intent_type = "查询类"
 
         await websocket.send_text(f"✅ 用户意图识别: {intent_type} ({intent})\n\n")
 
@@ -512,7 +461,7 @@ async def process_user_message_streaming(user_input: str, websocket: WebSocket):
     if user_intent == "A":
         # 问答类：查询知识库
         await process_qa_intent(user_input, websocket, start_time)
-    elif user_intent == "B" or user_intent == "C":
+    elif user_intent == "B":
         # 排查类、查询类：直接调用LLM
         await process_troubleshooting_intent(user_input, websocket, start_time)
 
@@ -522,41 +471,10 @@ async def process_qa_intent(user_input: str, websocket: WebSocket, start_time: f
     import time
     import json
     from nanobot.config.loader import load_config
-    from nanobot.knowledge.store import ChromaKnowledgeStore
 
     try:
         config = load_config()
-
-        # 创建 RAGConfig 并从配置文件加载完整配置
-        from nanobot.knowledge.rag_config import RAGConfig
-        rag_config = RAGConfig()
-        
-        # 从config.json的agents.defaults中读取RAG配置
-        if hasattr(config.agents, 'defaults'):
-            defaults = config.agents.defaults
-            if hasattr(defaults, 'embedding_model'):
-                rag_config.embedding_model = defaults.embedding_model
-            if hasattr(defaults, 'chunk_size'):
-                rag_config.chunk_size = defaults.chunk_size
-            if hasattr(defaults, 'chunk_overlap'):
-                rag_config.chunk_overlap = defaults.chunk_overlap
-            if hasattr(defaults, 'top_k'):
-                rag_config.top_k = defaults.top_k
-            if hasattr(defaults, 'similarity_threshold'):
-                rag_config.similarity_threshold = defaults.similarity_threshold
-            if hasattr(defaults, 'batch_size'):
-                rag_config.batch_size = defaults.batch_size
-            if hasattr(defaults, 'timeout'):
-                rag_config.timeout = defaults.timeout
-        
-        # 从rerank配置中读取
-        if hasattr(config, 'rerank'):
-            if hasattr(config.rerank, 'model_path') and config.rerank.model_path:
-                rag_config.rerank_model_path = config.rerank.model_path
-            if hasattr(config.rerank, 'threshold') and config.rerank.threshold > 0:
-                rag_config.rerank_threshold = config.rerank.threshold
-
-        store = ChromaKnowledgeStore(config.workspace_path, rag_config)
+        store = get_chroma_store(config.workspace_path, cfg=config)
     except RuntimeError as e:
         # CrossEncoder 初始化失败
         error_msg = f"❌ 知识库初始化失败: {str(e)}\n\n服务启动终止，请检查 CrossEncoder 模型配置。\n"

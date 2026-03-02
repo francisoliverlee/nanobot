@@ -14,6 +14,7 @@ from typing import Dict, List, Any
 
 from loguru import logger
 
+from .store_factory import get_chroma_store
 from .store import ChromaKnowledgeStore, DomainKnowledgeManager
 
 # Version control for RocketMQ knowledge
@@ -526,40 +527,15 @@ class RocketMQKnowledgeInitializer:
 
 def initialize_rocketmq_knowledge(workspace: Path) -> int | tuple[int, int]:
     """Initialize built-in RocketMQ knowledge."""
-    from nanobot.knowledge.rag_config import RAGConfig
     from nanobot.config.loader import load_config
-    
-    # 创建 RAGConfig 并从配置文件加载配置
-    rag_config = RAGConfig()
-    
-    # 从config.json的agents.defaults中读取RAG配置
+
+    cfg = None
     try:
-        config = load_config()
-        if hasattr(config.agents, 'defaults'):
-            defaults = config.agents.defaults
-            if hasattr(defaults, 'embedding_model'):
-                rag_config.embedding_model = defaults.embedding_model
-            if hasattr(defaults, 'chunk_size'):
-                rag_config.chunk_size = defaults.chunk_size
-            if hasattr(defaults, 'chunk_overlap'):
-                rag_config.chunk_overlap = defaults.chunk_overlap
-            if hasattr(defaults, 'top_k'):
-                rag_config.top_k = defaults.top_k
-            if hasattr(defaults, 'similarity_threshold'):
-                rag_config.similarity_threshold = defaults.similarity_threshold
-            if hasattr(defaults, 'batch_size'):
-                rag_config.batch_size = defaults.batch_size
-            if hasattr(defaults, 'timeout'):
-                rag_config.timeout = defaults.timeout
-        # 从rerank配置中读取
-        if hasattr(config, 'rerank'):
-            if hasattr(config.rerank, 'model_path') and config.rerank.model_path:
-                rag_config.rerank_model_path = config.rerank.model_path
-            if hasattr(config.rerank, 'threshold') and config.rerank.threshold > 0:
-                rag_config.rerank_threshold = config.rerank.threshold
+        cfg = load_config()
     except Exception:
-        pass  # 使用默认配置
-    
-    store = ChromaKnowledgeStore(workspace, rag_config)
+        # 使用默认配置路径
+        pass
+
+    store = get_chroma_store(workspace, cfg=cfg)
     initializer = RocketMQKnowledgeInitializer(store)
     return initializer.initialize()
