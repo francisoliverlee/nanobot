@@ -535,13 +535,27 @@ async def process_qa_intent(user_input: str, websocket: WebSocket, start_time: f
         if preview_links:
             preview_info = f"\n**预览信息**: {' | '.join(preview_links)}"
 
-        # 格式化知识库结果
+        # 从原文文件读取内容，并交给模型格式化为 Markdown（失败时回退）
+        source_content = (top_item.content or "").strip()
+        if hasattr(top_item, 'file_path') and top_item.file_path:
+            try:
+                raw_path = Path(top_item.file_path).expanduser().resolve()
+                if raw_path.is_file():
+                    source_content = raw_path.read_text(encoding='utf-8')
+            except Exception as e:
+                logger.error(f"读取 top_item.file_path 失败，回退到知识库存储内容: {e}")
+
+        source_for_llm = source_content
+        if len(source_for_llm) > 12000:
+            source_for_llm = source_for_llm[:12000] + "\n...[内容已截断]"
+
+        # 直接使用原文内容（不再做模型格式化）
         formatted_result = f"""### 1. {top_item.title}
 **Domain**: {top_item.domain} | **Category**: {top_item.category} | **Priority**: {top_item.priority}
 **Tags**: {', '.join(top_item.tags)}
 **Created**: {top_item.created_at[:10]}{preview_info}
 
-{top_item.content}
+{source_for_llm}
 
 ---
 """
@@ -602,9 +616,56 @@ async def process_qa_intent(user_input: str, websocket: WebSocket, start_time: f
 
         await websocket.send_text(json.dumps(knowledge_message, ensure_ascii=False))
 
-        # 问答类：直接输出知识库结果，不再调用LLM
+        # 问答类：将知识库原文输入模型，生成 Markdown 格式答案
+        await websocket.send_text("🤖 正在基于知识库原文生成答案...\n")
+
+        # 取前3条，控制输入长度
+        top_items = knowledge_results[:3]
+        context_blocks = []
+        for idx, item in enumerate(top_items, 1):
+            content = (item.content or "").strip()
+            if len(content) > 4000:
+                content = content[:4000] + "\n...[内容已截断]"
+            context_blocks.append(
+                f"[资料{idx}] 标题: {item.title}\n"
+                f"领域: {item.domain} | 分类: {item.category}\n"
+                f"标签: {', '.join(item.tags)}\n"
+                f"原文:\n{content}"
+            )
+
+        qa_prompt = (
+            "你是RocketMQ知识助手。请严格基于给定原文回答用户问题，不要编造。\n"
+            "输出要求：\n"
+            "1. 使用 Markdown 输出\n"
+            "2. 包含以下结构：\n"
+            "   - `## 结论`\n"
+            "   - `## 关键依据`\n"
+            "   - `## 建议操作`\n"
+            "3. 如果原文无法回答，明确写出“原文未提供足够信息”。\n"
+            f"\n用户问题：{user_input}\n\n"
+            "知识库原文：\n"
+            + "\n\n---\n\n".join(context_blocks)
+        )
+
+        answer_markdown = None
+        try:
+            if provider:
+                llm_resp = await provider.chat(
+                    messages=[{"role": "user", "content": qa_prompt}],
+                    model=config.agents.defaults.model,
+                    max_tokens=1200,
+                    temperature=0.2,
+                )
+                answer_markdown = (llm_resp.content or "").strip()
+        except Exception as e:
+            logger.warning(f"知识库问答模型生成失败，回退原文输出: {e}")
+
         await websocket.send_text("📚 知识库答案：\n")
-        await websocket.send_text(f"{knowledge_results[0].content}\n\n")
+        if answer_markdown:
+            await websocket.send_text(answer_markdown + "\n\n")
+        else:
+            # 兜底：模型失败时返回Top1原文
+            await websocket.send_text(f"{knowledge_results[0].content}\n\n")
 
         # 发送处理时间
         end_time = time.time()
