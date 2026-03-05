@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
+import asyncio
 import re
 from pathlib import Path
-from threading import Lock
+from threading import Lock, Thread
 from typing import Any
+
+from mcp import ClientSession
+from mcp.client.sse import sse_client
 
 import chromadb
 from chromadb.config import Settings
@@ -29,7 +33,132 @@ def _strip_frontmatter(content: str) -> str:
     return content
 
 
+def _extract_mcp_tool_schema_fields(tool_def: dict[str, Any]) -> tuple[str, str, Any]:
+    """Extract MCP tool name/description/input schema from flexible tool definition formats."""
+    # 兼容 OpenAI function schema: {"type":"function", "function": {...}}
+    fn = tool_def.get("function") if isinstance(tool_def, dict) else None
+    if isinstance(fn, dict):
+        return (
+            str(fn.get("name", "") or ""),
+            str(fn.get("description", "") or ""),
+            fn.get("parameters", {}),
+        )
+
+    # 兼容 MCP toolSpec schema: {"toolName": "...", "toolSpec": {...}}
+    tool_spec = tool_def.get("toolSpec") if isinstance(tool_def, dict) else None
+    if isinstance(tool_spec, dict):
+        name = str(tool_def.get("toolName") or tool_spec.get("name") or "")
+        desc = str(tool_spec.get("description") or "")
+        params = tool_spec.get("inputSchema", tool_spec.get("parameters", {}))
+        return name, desc, params
+
+    # 兼容扁平 schema: {"name": "...", "description": "...", "inputSchema": {...}}
+    name = str(tool_def.get("name", "") or "") if isinstance(tool_def, dict) else ""
+    desc = str(tool_def.get("description", "") or "") if isinstance(tool_def, dict) else ""
+    params = tool_def.get("inputSchema", tool_def.get("parameters", {})) if isinstance(tool_def, dict) else {}
+    return name, desc, params
+
+
+def _read_cfg(server_cfg: Any, key: str, default: Any = None) -> Any:
+    if isinstance(server_cfg, dict):
+        return server_cfg.get(key, default)
+    return getattr(server_cfg, key, default)
+
+
+def _join_server_url(base_url: str, path: str) -> str:
+    base = (base_url or "").strip()
+    if not base:
+        return ""
+    p = (path or "").strip()
+    if not p:
+        return base
+    return f"{base.rstrip('/')}" + (p if p.startswith("/") else f"/{p}")
+
+
+def _extract_tools_from_list_tools_result(result: Any) -> list[dict[str, Any]]:
+    if result is None:
+        return []
+
+    if hasattr(result, "model_dump"):
+        result = result.model_dump()
+
+    if hasattr(result, "tools"):
+        tools = getattr(result, "tools", None)
+        if isinstance(tools, list):
+            return [t.model_dump() if hasattr(t, "model_dump") else t for t in tools if isinstance(t, dict) or hasattr(t, "model_dump")]
+
+    if isinstance(result, dict):
+        tools = result.get("tools")
+        if isinstance(tools, list):
+            return [t for t in tools if isinstance(t, dict)]
+
+    return []
+
+
+async def _fetch_mcp_tools_from_server_async(
+    base_url: str,
+    auth_token: str = "",
+    timeout: int = 10,
+) -> list[dict[str, Any]]:
+    headers = {"Authorization": f"Bearer {auth_token}"} if auth_token else {}
+
+    async with asyncio.timeout(timeout):
+        async with sse_client(base_url, headers=headers) as (read_stream, write_stream):
+            async with ClientSession(read_stream, write_stream) as session:
+                await session.initialize()
+                result = await session.list_tools()
+                return _extract_tools_from_list_tools_result(result)
+
+
+def _run_async_blocking(coro: Any) -> Any:
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.run(coro)
+
+    holder: dict[str, Any] = {}
+    errors: dict[str, Exception] = {}
+
+    def _runner() -> None:
+        try:
+            holder["value"] = asyncio.run(coro)
+        except Exception as e:
+            errors["error"] = e
+
+    thread = Thread(target=_runner, daemon=True)
+    thread.start()
+    thread.join()
+
+    if "error" in errors:
+        raise errors["error"]
+
+    return holder.get("value")
+
+
+def _fetch_mcp_tools_from_server(base_url: str, auth_token: str = "", timeout: int = 10) -> list[dict[str, Any]]:
+    """Call MCP server by mcp SSE client and return full tool definitions."""
+    if not base_url:
+        return []
+
+    try:
+        tools = _run_async_blocking(
+            _fetch_mcp_tools_from_server_async(
+                base_url=base_url,
+                auth_token=auth_token,
+                timeout=timeout,
+            )
+        )
+        return tools if isinstance(tools, list) else []
+    except TimeoutError as e:
+        logger.debug(f"[ROUTING] MCP tools/list timeout for {base_url}: {e}")
+    except Exception as e:
+        logger.warning(f"[ROUTING] MCP tools/list unexpected error for {base_url}: {e}")
+
+    return []
+
+
 class IntentRoutingStore:
+
     """Separate vector stores for ops/tools and skills retrieval."""
 
     def __init__(self, workspace: Path, config: Any):
@@ -76,7 +205,7 @@ class IntentRoutingStore:
             return client.create_collection(name=name)
 
     def init_tools_index(self, tool_schemas: list[dict[str, Any]], mcp_servers: dict[str, Any] | None = None) -> int:
-        """Build/refresh tools collection from ToolRegistry schemas and static MCP config."""
+        """Build/refresh tools collection from ToolRegistry schemas and MCP servers full tools."""
         collection = self._get_or_create(self.tools_client, TOOLS_COLLECTION)
 
         docs: list[str] = []
@@ -101,21 +230,65 @@ class IntentRoutingStore:
             metas.append({"source": "registry_tool", "tool_name": name})
 
         for server_name, server_cfg in (mcp_servers or {}).items():
-            if not getattr(server_cfg, "enabled", False):
+            if not _read_cfg(server_cfg, "enabled", False):
                 continue
-            server_url = getattr(server_cfg, "server_url", "")
-            static_tools = ["use_mcp_tool", "mcp_knowledge_search"]
-            for tool_name in static_tools:
+
+            server_url = str(_read_cfg(server_cfg, "server_url", "") or "")
+            auth_token = str(_read_cfg(server_cfg, "auth_token", "") or "")
+
+            # 优先从 MCP list-tools 端点动态拉取，确保入库“全部工具定义”
+            server_tools = _fetch_mcp_tools_from_server(base_url=server_url, auth_token=auth_token)
+
+            # 动态拉取失败时，回退到本地配置中可能携带的 tools 字段
+            if not server_tools:
+                server_tools = (
+                    _read_cfg(server_cfg, "tools", None)
+                    or _read_cfg(server_cfg, "tool_specs", None)
+                    or []
+                )
+                if server_tools:
+                    logger.warning(
+                        f"[ROUTING] MCP tools/list unavailable for {server_name}, fallback to local configured tools"
+                    )
+
+            if not server_tools:
+                # 无工具清单时保留 server 级描述，便于检索命中到 MCP 入口
+                doc = (
+                    f"mcp_server: {server_name}\n"
+                    f"server_url: {server_url}\n"
+                    f"tool_name: use_mcp_tool\n"
+                    f"description: 通过 MCP 服务 {server_name} 调用其提供的工具能力。"
+                )
+                ids.append(f"mcp::{server_name}::use_mcp_tool")
+                docs.append(doc)
+                metas.append({"source": "mcp_server", "server_name": server_name, "tool_name": "use_mcp_tool"})
+                continue
+
+            for tool_def in server_tools:
+                tool_name, tool_desc, tool_params = _extract_mcp_tool_schema_fields(tool_def)
+                if not tool_name:
+                    logger.debug(f"[ROUTING] discovered MCP tool without valid name on server {server_name}, skipped")
+                    continue
+
+                logger.debug(f"[ROUTING] discovered MCP tool: server={server_name}, tool={tool_name}")
+
                 doc = (
                     f"mcp_server: {server_name}\n"
                     f"server_url: {server_url}\n"
                     f"tool_name: {tool_name}\n"
-                    f"description: 通过静态配置的MCP服务访问外部工具能力。"
+                    f"description: {tool_desc}\n"
+                    f"parameters: {tool_params}\n"
+                    f"usage: 通过 MCP 服务调用该工具完成外部系统查询或操作。"
                 )
                 ids.append(f"mcp::{server_name}::{tool_name}")
                 docs.append(doc)
                 metas.append(
-                    {"source": "mcp_static", "server_name": server_name, "tool_name": tool_name}
+                    {
+                        "source": "mcp_tool",
+                        "server_name": server_name,
+                        "tool_name": tool_name,
+                        "server_url": server_url,
+                    }
                 )
 
         if not docs:

@@ -1,6 +1,7 @@
 """Configuration schema using Pydantic."""
 
 from pathlib import Path
+from typing import Any
 
 from pydantic import BaseModel, Field, ConfigDict
 from pydantic_settings import BaseSettings
@@ -207,8 +208,12 @@ class MCPConnectionConfig(BaseModel):
     """MCP server connection configuration."""
     server_name: str = ""  # MCP服务器名称
     server_url: str = ""  # MCP服务器URL
+    message_path: str = "/mcp/message"  # MCP消息端点路径
     auth_token: str = ""  # 认证令牌
     enabled: bool = False  # 是否启用
+    # MCP 服务工具清单（支持多种字段名，兼容不同配置来源）
+    tools: list[dict[str, Any]] = Field(default_factory=list)
+    tool_specs: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class MCPConfig(BaseModel):

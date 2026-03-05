@@ -1,14 +1,16 @@
 """Web interface for nanobot with intent classification."""
 
 from pathlib import Path
+from typing import Any
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+
 from fastapi.responses import HTMLResponse
 from loguru import logger
 
 from nanobot.agent import AgentLoop
 from nanobot.config import Config
-from nanobot.knowledge.intent_routing_store import get_intent_routing_store
+from nanobot.knowledge.intent_routing_store import get_intent_routing_store, IntentRoutingStore
 from nanobot.knowledge.store_factory import get_chroma_store
 from nanobot.providers import LLMProvider
 
@@ -103,7 +105,7 @@ manager = ConnectionManager()
 provider: LLMProvider = None
 agent_loop: AgentLoop = None
 config: Config = None
-intent_routing_store = None
+intent_routing_store: IntentRoutingStore = None
 
 
 def initialize_webui_resources():
@@ -477,7 +479,7 @@ async def classify_user_intent(user_input: str, websocket: WebSocket) -> str:
         response = await provider.chat(
             messages=[{"role": "user", "content": intent_prompt}],
             model=config.agents.defaults.model,
-            max_tokens=10,  # 只需要返回A/B/C
+            max_tokens=1000,  # 只需要返回A/B/C
             temperature=0.1  # 低温度确保稳定输出
         )
 
@@ -500,8 +502,8 @@ async def classify_user_intent(user_input: str, websocket: WebSocket) -> str:
 
     except Exception as e:
         logger.error(f"意图识别失败: {e}")
-        await websocket.send_text(f"⚠️ 意图识别失败: {str(e)}，无法回答\n")
-        return "UNKNOWN"  # 出错时默认为未知类
+        await websocket.send_text(f"⚠️ 意图识别失败: {str(e)}，默认为问答类(A)\n")
+        return "A"  # 出错时默认回退到 A
 
 
 async def process_user_message_streaming(user_input: str, websocket: WebSocket):
@@ -531,6 +533,10 @@ async def process_user_message_streaming(user_input: str, websocket: WebSocket):
     elif user_intent == "C":
         # 故障排查：查 skills 索引 top2，作为系统补充上下文进入 loop
         await process_troubleshooting_intent(user_input, websocket, start_time)
+    else:
+        # 非法值默认 A
+        await websocket.send_text(f"⚠️ 意图值非法: {user_intent}，默认按 A 问答类处理\n")
+        await process_qa_intent(user_input, websocket, start_time)
 
 
 def _build_retrieval_context(title: str, results: list[dict], limit: int = 2) -> str | None:
@@ -541,6 +547,7 @@ def _build_retrieval_context(title: str, results: list[dict], limit: int = 2) ->
     for i, item in enumerate(top, 1):
         meta = item.get("metadata", {}) or {}
         dist = item.get("distance")
+        rerank_score = item.get("rerank_score")
         doc = (item.get("document") or "").strip()
         if len(doc) > 1200:
             doc = doc[:1200] + "\n...[内容已截断]"
@@ -548,32 +555,180 @@ def _build_retrieval_context(title: str, results: list[dict], limit: int = 2) ->
             f"\n## {i}. {meta.get('tool_name') or meta.get('skill_name') or item.get('id', '')}\n"
             f"- source: {meta.get('source', '')}\n"
             f"- distance: {dist}\n"
+            f"- rerank_score: {rerank_score}\n"
             f"- content:\n{doc}"
         )
     lines.append("\n请优先参考上述结果进行后续推理和工具调用。")
     return "\n".join(lines)
 
 
+def _rerank_route_candidates(query: str, results: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """使用 CrossEncoder 对候选结果重排序，失败时回退距离排序。"""
+    if not results:
+        return []
+
+    model_path = getattr(getattr(config, "rerank", None), "model_path", "") if config else ""
+    if not model_path:
+        fallback = sorted(results, key=lambda x: x.get("distance") if x.get("distance") is not None else 1e9)
+        for item in fallback:
+            dist = item.get("distance")
+            item["rerank_score"] = 0.0 if dist is None else float(max(0.0, 1.0 - float(dist)))
+        return fallback
+
+    try:
+        import math
+        from sentence_transformers import CrossEncoder
+
+        reranker = CrossEncoder(model_path)
+        pairs = [(query, (item.get("document") or "")) for item in results]
+        raw_scores = reranker.predict(pairs)
+        for i, score in enumerate(raw_scores):
+            rerank_score = float(1 / (1 + math.exp(-float(score))) * 100)
+            results[i]["rerank_score"] = rerank_score
+
+        results.sort(key=lambda x: x.get("rerank_score", 0.0), reverse=True)
+        return results
+    except Exception as e:
+        logger.warning(f"[WEB] ops intent rerank failed, fallback to distance sort: {e}")
+        fallback = sorted(results, key=lambda x: x.get("distance") if x.get("distance") is not None else 1e9)
+        for item in fallback:
+            dist = item.get("distance")
+            item["rerank_score"] = 0.0 if dist is None else float(max(0.0, 1.0 - float(dist)))
+        return fallback
+
+
 async def process_ops_intent(user_input: str, websocket: WebSocket, start_time: float):
-    """处理运维操作意图：tools 索引检索 top2 后进入 loop."""
+
+    """处理运维操作意图：tools/skills 联合检索并重排后进入 loop。"""
+    import json
+    import time
+
+    def _build_ops_preview_items(results: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        preview_items: list[dict[str, Any]] = []
+        seen_keys: set[str] = set()
+
+        for item in results:
+            meta = item.get("metadata", {}) or {}
+            skill_name = meta.get("skill_name") or ""
+            tool_name = meta.get("tool_name") or ""
+            server_name = meta.get("server_name") or ""
+
+            # skills 命中优先展示文件预览
+            file_path = meta.get("path") or ""
+            if file_path:
+                try:
+                    fp = Path(file_path).expanduser()
+                    if not fp.is_absolute() and config and getattr(config, "workspace_path", None):
+                        fp = Path(config.workspace_path) / fp
+                    file_path = str(fp.resolve())
+                except Exception:
+                    file_path = str(file_path)
+
+                dedupe_key = f"file::{file_path}"
+                if dedupe_key not in seen_keys:
+                    preview_items.append(
+                        {
+                            "type": "file",
+                            "id": file_path,
+                            "label": f"📁 预览Skill文件: {skill_name or 'unknown'}",
+                            "path": file_path,
+                        }
+                    )
+                    seen_keys.add(dedupe_key)
+                continue
+
+            # MCP 工具命中回退展示服务 URL 预览
+            server_url = meta.get("server_url") or ""
+            if server_url:
+                dedupe_key = f"url::{server_url}"
+                if dedupe_key not in seen_keys:
+                    preview_items.append(
+                        {
+                            "type": "url",
+                            "id": server_url,
+                            "label": f"🌐 预览MCP服务: {server_name or tool_name or 'mcp'}",
+                            "url": server_url,
+                        }
+                    )
+                    seen_keys.add(dedupe_key)
+
+        return preview_items
+
     if not intent_routing_store:
-        await websocket.send_text("⚠️ tools 索引未初始化，直接进入执行流程。\n")
-        return await process_troubleshooting_intent(user_input, websocket, start_time, additional_context=None)
+        await websocket.send_text("⚠️ tools/skills 索引未初始化，直接进入执行流程。\n")
+        return await process_troubleshooting_intent(
+            user_input,
+            websocket,
+            start_time,
+            additional_context=None,
+            use_skills_retrieval=False,
+        )
+
+    tools_results: list[dict[str, Any]] = []
+    skills_results: list[dict[str, Any]] = []
 
     await websocket.send_text("🧰 正在检索工具能力库（top2）...\n")
     try:
-        results = intent_routing_store.search_tools(user_input, limit=2)
-        additional_context = _build_retrieval_context("Ops Tool Retrieval Context", results, limit=2)
-        await websocket.send_text(f"✅ 工具检索完成，命中 {len(results)} 条\n\n")
+        tools_results = intent_routing_store.search_tools(user_input, limit=2)
+        await websocket.send_text(f"✅ tools 检索完成，命中 {len(tools_results)} 条\n")
     except Exception as e:
-        await websocket.send_text(f"⚠️ 工具检索失败: {str(e)}，直接进入执行流程。\n")
+        await websocket.send_text(f"⚠️ tools 检索失败: {str(e)}\n")
+
+    await websocket.send_text("🛠️ 正在检索 skills 库（top2）...\n")
+    try:
+        skills_results = intent_routing_store.search_skills(user_input, limit=2)
+        await websocket.send_text(f"✅ skills 检索完成，命中 {len(skills_results)} 条\n")
+    except Exception as e:
+        await websocket.send_text(f"⚠️ skills 检索失败: {str(e)}\n")
+
+    merged_results = (tools_results or []) + (skills_results or [])
+    if merged_results:
+        reranked_results = _rerank_route_candidates(user_input, merged_results)
+        additional_context = _build_retrieval_context("Ops/Skills Retrieval Context", reranked_results, limit=2)
+
+        top2_results = reranked_results[:2]
+        preview_items = _build_ops_preview_items(top2_results)
+        retrieval_markdown = _build_retrieval_context("Ops/Skills Retrieval Preview", top2_results, limit=2) or ""
+
+        knowledge_message = {
+            "type": "stream_chunk",
+            "content_type": "knowledge",
+            "content": f"tools={len(tools_results)}，skills={len(skills_results)}，重排后展示 top2",
+            "knowledge_status": "success",
+            "knowledge_count": len(top2_results),
+            "knowledge_result": retrieval_markdown,
+            "preview_items": preview_items,
+            "timestamp": time.time(),
+            "duration_from_start": round(time.time() - start_time, 3),
+        }
+        await websocket.send_text(json.dumps(knowledge_message, ensure_ascii=False))
+
+        await websocket.send_text(
+            f"✅ 联合检索完成，tools={len(tools_results)}，skills={len(skills_results)}，重排后取 top2\n\n"
+        )
+    else:
         additional_context = None
+        await websocket.send_text("⚠️ tools/skills 均未命中，直接进入执行流程。\n")
+
+        knowledge_message = {
+            "type": "stream_chunk",
+            "content_type": "knowledge",
+            "content": "tools/skills 均未命中",
+            "knowledge_status": "no_results",
+            "knowledge_count": 0,
+            "knowledge_result": "",
+            "preview_items": [],
+            "timestamp": time.time(),
+            "duration_from_start": round(time.time() - start_time, 3),
+        }
+        await websocket.send_text(json.dumps(knowledge_message, ensure_ascii=False))
 
     return await process_troubleshooting_intent(
         user_input,
         websocket,
         start_time,
         additional_context=additional_context,
+        use_skills_retrieval=False,
     )
 
 
@@ -745,18 +900,18 @@ async def process_qa_intent(user_input: str, websocket: WebSocket, start_time: f
             )
 
         qa_prompt = (
-            "你是RocketMQ知识助手。请严格基于给定原文回答用户问题，不要编造。\n"
-            "输出要求：\n"
-            "1. 使用 Markdown 输出\n"
-            "2. 包含以下结构：\n"
-            "   - `## 结论`\n"
-            "   - `## 关键依据`\n"
-            "   - `## 建议操作`\n"
-            "   - `## 建议执行工具`\n"
-            "3. 如果原文无法回答，明确写出“原文未提供足够信息”。\n"
-            f"\n用户问题：{user_input}\n\n"
-            "知识库原文：\n"
-            + "\n\n---\n\n".join(context_blocks)
+                "你是RocketMQ知识助手。请严格基于给定原文回答用户问题，不要编造。\n"
+                "输出要求：\n"
+                "1. 使用 Markdown 输出\n"
+                "2. 包含以下结构：\n"
+                "   - `## 结论`\n"
+                "   - `## 关键依据`\n"
+                "   - `## 建议操作`\n"
+                "   - `## 建议执行工具`\n"
+                "3. 如果原文无法回答，明确写出“原文未提供足够信息”。\n"
+                f"\n用户问题：{user_input}\n\n"
+                "知识库原文：\n"
+                + "\n\n---\n\n".join(context_blocks)
         )
 
         answer_markdown = None
@@ -783,7 +938,7 @@ async def process_qa_intent(user_input: str, websocket: WebSocket, start_time: f
         end_time = time.time()
         total_processing_time = round(end_time - start_time, 1)
         await websocket.send_text(f"\n---\n*总耗时: {total_processing_time}秒*\n")
-        
+
         # 发送处理完成状态消息，让前端按钮可以点击
         completion_message = {
             'type': 'stream_chunk',
@@ -794,7 +949,7 @@ async def process_qa_intent(user_input: str, websocket: WebSocket, start_time: f
             'duration_from_start': total_processing_time
         }
         await websocket.send_text(json.dumps(completion_message, ensure_ascii=False))
-        
+
         return
     else:
         # 问答类：没有找到知识库结果，回答"不知道"
@@ -805,7 +960,7 @@ async def process_qa_intent(user_input: str, websocket: WebSocket, start_time: f
         end_time = time.time()
         total_processing_time = round(end_time - start_time, 1)
         await websocket.send_text(f"\n---\n*总耗时: {total_processing_time}秒*\n")
-        
+
         # 发送处理完成状态消息，让前端按钮可以点击
         completion_message = {
             'type': 'stream_chunk',
@@ -816,7 +971,7 @@ async def process_qa_intent(user_input: str, websocket: WebSocket, start_time: f
             'duration_from_start': total_processing_time
         }
         await websocket.send_text(json.dumps(completion_message, ensure_ascii=False))
-        
+
         return
 
 
@@ -825,17 +980,21 @@ async def process_troubleshooting_intent(
         websocket: WebSocket,
         start_time: float,
         additional_context: str | None = None,
+        use_skills_retrieval: bool = True,
 ):
     """处理排查类意图：可带系统补充上下文进入 loop。"""
+
     import time
     import json
 
-    # C 类默认先查 skills 索引（B 类会直接传 additional_context）
-    if additional_context is None and intent_routing_store:
+    # C 类默认先查 skills 索引；B 类可通过 use_skills_retrieval=False 禁用
+    if use_skills_retrieval and additional_context is None and intent_routing_store:
+
         await websocket.send_text("🛠️ 正在检索 skills 库（top2）...\n")
         try:
             skill_hits = intent_routing_store.search_skills(user_input, limit=2)
-            additional_context = _build_retrieval_context("Troubleshooting Skill Retrieval Context", skill_hits, limit=2)
+            additional_context = _build_retrieval_context("Troubleshooting Skill Retrieval Context", skill_hits,
+                                                          limit=2)
             await websocket.send_text(f"✅ skills 检索完成，命中 {len(skill_hits)} 条\n\n")
         except Exception as e:
             await websocket.send_text(f"⚠️ skills 检索失败: {str(e)}，继续执行。\n")
@@ -957,7 +1116,7 @@ async def process_troubleshooting_intent(
 
     # Send processing times
     await websocket.send_text(f"\n---\n*总耗时: {total_processing_time}秒 | LLM执行耗时: {llm_execution_time}秒*")
-    
+
     # 发送处理完成状态消息，让前端按钮可以点击
     completion_message = {
         'type': 'stream_chunk',
@@ -968,7 +1127,7 @@ async def process_troubleshooting_intent(
         'duration_from_start': total_processing_time
     }
     await websocket.send_text(json.dumps(completion_message, ensure_ascii=False))
-    
+
     # 发送处理完成状态消息，让前端按钮可以点击
     completion_message = {
         'type': 'stream_chunk',

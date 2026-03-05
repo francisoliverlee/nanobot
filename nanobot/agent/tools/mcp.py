@@ -1,10 +1,56 @@
 """MCP (Model Context Protocol) tool for accessing external services."""
 
+import asyncio
 import json
 from typing import Any
 
+from mcp import ClientSession
+from mcp.client.sse import sse_client
+
 from nanobot.agent.tools.base import Tool
 from nanobot.config.loader import load_config
+
+
+def _join_server_url(base_url: str, path: str) -> str:
+    base = (base_url or "").strip()
+    if not base:
+        return ""
+    p = (path or "").strip()
+    if not p:
+        return base
+    return f"{base.rstrip('/')}" + (p if p.startswith("/") else f"/{p}")
+
+
+def _normalize_mcp_result(result: Any) -> Any:
+    if result is None:
+        return {}
+    if isinstance(result, dict):
+        return result
+    if hasattr(result, "model_dump"):
+        return result.model_dump()
+
+    normalized: dict[str, Any] = {}
+    for attr in ("content", "isError", "error", "structuredContent"):
+        if hasattr(result, attr):
+            normalized[attr] = getattr(result, attr)
+    return normalized or {"result": str(result)}
+
+
+async def _call_mcp_tool_via_sse(
+    sse_url: str,
+    tool_name: str,
+    arguments: dict[str, Any],
+    auth_token: str = "",
+    timeout: int = 30,
+) -> Any:
+    headers = {"Authorization": f"Bearer {auth_token}"} if auth_token else {}
+
+    async with asyncio.timeout(timeout):
+        async with sse_client(sse_url, headers=headers) as (read_stream, write_stream):
+            async with ClientSession(read_stream, write_stream) as session:
+                await session.initialize()
+                result = await session.call_tool(tool_name, arguments)
+                return _normalize_mcp_result(result)
 
 
 class MCPTool(Tool):
@@ -53,17 +99,20 @@ class MCPTool(Tool):
             if not server_config.enabled:
                 return f"Error: MCP server '{server_name}' is not enabled"
 
-            # Simulate MCP tool call (in a real implementation, this would connect to MCP server)
-            # For now, return a placeholder response
-            result = {
-                "server": server_name,
-                "tool": tool_name,
-                "arguments": arguments,
-                "status": "success",
-                "result": f"MCP tool '{tool_name}' called successfully with arguments: {json.dumps(arguments, indent=2)}"
-            }
+            server_url = getattr(server_config, "server_url", "")
+            message_path = getattr(server_config, "message_path", "/mcp/message")
+            auth_token = getattr(server_config, "auth_token", "")
+            message_url = _join_server_url(server_url, message_path)
+            if not message_url:
+                return f"Error: MCP server '{server_name}' has invalid server_url/message_path configuration"
 
-            return json.dumps(result, indent=2)
+            response = await _call_mcp_tool_via_sse(
+                sse_url=message_url,
+                tool_name=tool_name,
+                arguments=arguments,
+                auth_token=auth_token,
+            )
+            return json.dumps(response, indent=2, ensure_ascii=False)
 
         except Exception as e:
             return f"Error calling MCP tool: {str(e)}"
