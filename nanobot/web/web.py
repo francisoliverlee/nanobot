@@ -8,6 +8,7 @@ from loguru import logger
 
 from nanobot.agent import AgentLoop
 from nanobot.config import Config
+from nanobot.knowledge.intent_routing_store import get_intent_routing_store
 from nanobot.knowledge.store_factory import get_chroma_store
 from nanobot.providers import LLMProvider
 
@@ -102,11 +103,12 @@ manager = ConnectionManager()
 provider: LLMProvider = None
 agent_loop: AgentLoop = None
 config: Config = None
+intent_routing_store = None
 
 
 def initialize_webui_resources():
     """Initialize resources for webui."""
-    global provider, agent_loop, config
+    global provider, agent_loop, config, intent_routing_store
     from nanobot.config.loader import load_config
     from nanobot.bus.queue import MessageBus
     from nanobot.agent.loop import AgentLoop
@@ -142,6 +144,20 @@ def initialize_webui_resources():
     # 诊断知识库状态
     knowledge_status = diagnose_knowledge_base(config.workspace_path)
     logger.info(f"[WEB] 📚 知识库状态: {knowledge_status}")
+
+    # 初始化意图路由向量库（tools/skills）
+    try:
+        intent_routing_store = get_intent_routing_store(config.workspace_path, config)
+        tools_count = intent_routing_store.init_tools_index(
+            tool_schemas=agent_loop.tools.get_definitions(),
+            mcp_servers=config.mcp.servers,
+        )
+        skills_count = intent_routing_store.init_skills_index(agent_loop.context.skills)
+        logger.info(
+            f"[WEB] 🧭 意图路由索引初始化完成: tools_docs={tools_count}, skills_chunks={skills_count}"
+        )
+    except Exception as e:
+        logger.error(f"[WEB] ❌ 意图路由索引初始化失败: {e}")
 
     return True
 
@@ -384,7 +400,7 @@ async def classify_user_intent(user_input: str, websocket: WebSocket) -> str:
         websocket: WebSocket连接
         
     Returns:
-        'A' 表示问答类，'B' 表示排查类
+        'A' 表示知识问答，'B' 表示运维操作，'C' 表示故障排查
     """
     intent_prompt = f"""
     你是一个意图路由分类器。请判断用户问题的意图，仅回复单个字母（A、B、C）。
@@ -461,20 +477,22 @@ async def classify_user_intent(user_input: str, websocket: WebSocket) -> str:
         response = await provider.chat(
             messages=[{"role": "user", "content": intent_prompt}],
             model=config.agents.defaults.model,
-            max_tokens=10,  # 只需要返回A或B
+            max_tokens=10,  # 只需要返回A/B/C
             temperature=0.1  # 低温度确保稳定输出
         )
 
         intent = response.content.strip().upper()
 
         # 验证返回结果
-        if intent not in ['A', 'B']:
+        if intent not in ['A', 'B', 'C']:
             await websocket.send_text(f"⚠️ 意图识别结果异常: {intent}，默认为问答类\n")
             return "A"
 
         intent_type = "问答类"
         if intent == "B":
-            intent_type = "排查类"
+            intent_type = "运维操作类"
+        if intent == "C":
+            intent_type = "排障类"
 
         await websocket.send_text(f"✅ 用户意图识别: {intent_type} ({intent})\n\n")
 
@@ -508,8 +526,55 @@ async def process_user_message_streaming(user_input: str, websocket: WebSocket):
         # 问答类：查询知识库
         await process_qa_intent(user_input, websocket, start_time)
     elif user_intent == "B":
-        # 排查类、查询类：直接调用LLM
+        # 运维操作：查 tools 索引 top2，作为系统补充上下文进入 loop
+        await process_ops_intent(user_input, websocket, start_time)
+    elif user_intent == "C":
+        # 故障排查：查 skills 索引 top2，作为系统补充上下文进入 loop
         await process_troubleshooting_intent(user_input, websocket, start_time)
+
+
+def _build_retrieval_context(title: str, results: list[dict], limit: int = 2) -> str | None:
+    if not results:
+        return None
+    top = results[:limit]
+    lines = [f"# {title}", "以下是与当前问题最相关的检索结果（top2）："]
+    for i, item in enumerate(top, 1):
+        meta = item.get("metadata", {}) or {}
+        dist = item.get("distance")
+        doc = (item.get("document") or "").strip()
+        if len(doc) > 1200:
+            doc = doc[:1200] + "\n...[内容已截断]"
+        lines.append(
+            f"\n## {i}. {meta.get('tool_name') or meta.get('skill_name') or item.get('id', '')}\n"
+            f"- source: {meta.get('source', '')}\n"
+            f"- distance: {dist}\n"
+            f"- content:\n{doc}"
+        )
+    lines.append("\n请优先参考上述结果进行后续推理和工具调用。")
+    return "\n".join(lines)
+
+
+async def process_ops_intent(user_input: str, websocket: WebSocket, start_time: float):
+    """处理运维操作意图：tools 索引检索 top2 后进入 loop."""
+    if not intent_routing_store:
+        await websocket.send_text("⚠️ tools 索引未初始化，直接进入执行流程。\n")
+        return await process_troubleshooting_intent(user_input, websocket, start_time, additional_context=None)
+
+    await websocket.send_text("🧰 正在检索工具能力库（top2）...\n")
+    try:
+        results = intent_routing_store.search_tools(user_input, limit=2)
+        additional_context = _build_retrieval_context("Ops Tool Retrieval Context", results, limit=2)
+        await websocket.send_text(f"✅ 工具检索完成，命中 {len(results)} 条\n\n")
+    except Exception as e:
+        await websocket.send_text(f"⚠️ 工具检索失败: {str(e)}，直接进入执行流程。\n")
+        additional_context = None
+
+    return await process_troubleshooting_intent(
+        user_input,
+        websocket,
+        start_time,
+        additional_context=additional_context,
+    )
 
 
 async def process_qa_intent(user_input: str, websocket: WebSocket, start_time: float):
@@ -718,6 +783,18 @@ async def process_qa_intent(user_input: str, websocket: WebSocket, start_time: f
         end_time = time.time()
         total_processing_time = round(end_time - start_time, 1)
         await websocket.send_text(f"\n---\n*总耗时: {total_processing_time}秒*\n")
+        
+        # 发送处理完成状态消息，让前端按钮可以点击
+        completion_message = {
+            'type': 'stream_chunk',
+            'content_type': 'completion',
+            'content': '处理完成',
+            'is_completed': True,
+            'timestamp': end_time,
+            'duration_from_start': total_processing_time
+        }
+        await websocket.send_text(json.dumps(completion_message, ensure_ascii=False))
+        
         return
     else:
         # 问答类：没有找到知识库结果，回答"不知道"
@@ -728,15 +805,42 @@ async def process_qa_intent(user_input: str, websocket: WebSocket, start_time: f
         end_time = time.time()
         total_processing_time = round(end_time - start_time, 1)
         await websocket.send_text(f"\n---\n*总耗时: {total_processing_time}秒*\n")
+        
+        # 发送处理完成状态消息，让前端按钮可以点击
+        completion_message = {
+            'type': 'stream_chunk',
+            'content_type': 'completion',
+            'content': '处理完成',
+            'is_completed': True,
+            'timestamp': end_time,
+            'duration_from_start': total_processing_time
+        }
+        await websocket.send_text(json.dumps(completion_message, ensure_ascii=False))
+        
         return
 
 
-async def process_troubleshooting_intent(user_input: str, websocket: WebSocket, start_time: float):
-    """处理排查类意图：直接调用LLM"""
+async def process_troubleshooting_intent(
+        user_input: str,
+        websocket: WebSocket,
+        start_time: float,
+        additional_context: str | None = None,
+):
+    """处理排查类意图：可带系统补充上下文进入 loop。"""
     import time
     import json
 
-    await websocket.send_text("🔧 检测到排查类问题，直接调用AI分析...\n\n")
+    # C 类默认先查 skills 索引（B 类会直接传 additional_context）
+    if additional_context is None and intent_routing_store:
+        await websocket.send_text("🛠️ 正在检索 skills 库（top2）...\n")
+        try:
+            skill_hits = intent_routing_store.search_skills(user_input, limit=2)
+            additional_context = _build_retrieval_context("Troubleshooting Skill Retrieval Context", skill_hits, limit=2)
+            await websocket.send_text(f"✅ skills 检索完成，命中 {len(skill_hits)} 条\n\n")
+        except Exception as e:
+            await websocket.send_text(f"⚠️ skills 检索失败: {str(e)}，继续执行。\n")
+
+    await websocket.send_text("🔧 检测到排查/执行类问题，进入AI分析...\n\n")
 
     # Record LLM start time
     llm_start_time = time.time()
@@ -829,7 +933,12 @@ async def process_troubleshooting_intent(user_input: str, websocket: WebSocket, 
     agent_loop.stream_callback = stream_callback
 
     # Process with streaming output
-    response = await agent_loop.process_direct(user_input, session_key="cli:webui")
+    response = await agent_loop.process_direct(
+        user_input,
+        session_key="cli:webui",
+        additional_context=additional_context,
+        disable_auto_kb=True,
+    )
 
     # Record LLM end time
     llm_end_time = time.time()
@@ -848,6 +957,28 @@ async def process_troubleshooting_intent(user_input: str, websocket: WebSocket, 
 
     # Send processing times
     await websocket.send_text(f"\n---\n*总耗时: {total_processing_time}秒 | LLM执行耗时: {llm_execution_time}秒*")
+    
+    # 发送处理完成状态消息，让前端按钮可以点击
+    completion_message = {
+        'type': 'stream_chunk',
+        'content_type': 'completion',
+        'content': '处理完成',
+        'is_completed': True,
+        'timestamp': end_time,
+        'duration_from_start': total_processing_time
+    }
+    await websocket.send_text(json.dumps(completion_message, ensure_ascii=False))
+    
+    # 发送处理完成状态消息，让前端按钮可以点击
+    completion_message = {
+        'type': 'stream_chunk',
+        'content_type': 'completion',
+        'content': '处理完成',
+        'is_completed': True,
+        'timestamp': end_time,
+        'duration_from_start': total_processing_time
+    }
+    await websocket.send_text(json.dumps(completion_message, ensure_ascii=False))
 
 
 async def process_user_message(user_input: str) -> str:

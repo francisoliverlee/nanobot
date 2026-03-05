@@ -12,8 +12,8 @@ from loguru import logger
 from nanobot.agent.context import ContextBuilder
 from nanobot.agent.subagent import SubagentManager
 from nanobot.agent.tools.cron import CronTool
-from nanobot.agent.tools.filesystem import ReadFileTool, WriteFileTool, EditFileTool, ListDirTool
 from nanobot.agent.tools.knowledge import KnowledgeSearchTool
+from nanobot.agent.tools.mcp import MCPTool
 from nanobot.agent.tools.message import MessageTool
 from nanobot.agent.tools.registry import ToolRegistry
 from nanobot.agent.tools.shell import ExecTool
@@ -92,11 +92,11 @@ class AgentLoop:
         ))
 
         # File tools (restrict to workspace if configured)
-        allowed_dir = self.workspace if self.restrict_to_workspace else None
-        self.tools.register(ReadFileTool(allowed_dir=allowed_dir))
-        self.tools.register(WriteFileTool(allowed_dir=allowed_dir))
-        self.tools.register(EditFileTool(allowed_dir=allowed_dir))
-        self.tools.register(ListDirTool(allowed_dir=allowed_dir))
+        # allowed_dir = self.workspace if self.restrict_to_workspace else None
+        # self.tools.register(ReadFileTool(allowed_dir=allowed_dir))
+        # self.tools.register(WriteFileTool(allowed_dir=allowed_dir))
+        # self.tools.register(EditFileTool(allowed_dir=allowed_dir))
+        # self.tools.register(ListDirTool(allowed_dir=allowed_dir))
 
         # Web tools
         # self.tools.register(WebSearchTool(api_key=self.brave_api_key))
@@ -115,7 +115,7 @@ class AgentLoop:
         #     self.tools.register(CronTool(self.cron_service))
 
         # MCP tools (for Model Context Protocol integration)
-        # self.tools.register(MCPTool())
+        self.tools.register(MCPTool())
         # self.tools.register(MCPKnowledgeSearchTool())
 
         # Knowledge base tools (for local knowledge storage and retrieval)
@@ -193,8 +193,15 @@ class AgentLoop:
         if isinstance(cron_tool, CronTool):
             cron_tool.set_context(msg.channel, msg.chat_id)
 
-        # 在构建消息前优先查询知识库
-        knowledge_context = await self._query_knowledge_base(msg.content)
+        # 可从上层传入额外系统上下文；需要时可关闭自动知识库查询
+        metadata = msg.metadata or {}
+        additional_context = metadata.get("additional_context")
+        disable_auto_kb = bool(metadata.get("disable_auto_kb", False))
+
+        knowledge_context = additional_context
+        if knowledge_context is None and not disable_auto_kb:
+            # 在构建消息前优先查询知识库
+            knowledge_context = await self._query_knowledge_base(msg.content)
 
         # 构建初始消息（如果存在知识库查询结果，将其作为额外上下文）
         messages = self.context.build_messages(
@@ -713,6 +720,8 @@ class AgentLoop:
             session_key: str = "cli:direct",
             channel: str = "cli",
             chat_id: str = "direct",
+            additional_context: str | None = None,
+            disable_auto_kb: bool = False,
     ) -> str:
         """
         Process a message directly (for CLI or cron usage).
@@ -730,7 +739,11 @@ class AgentLoop:
             channel=channel,
             sender_id="user",
             chat_id=chat_id,
-            content=content
+            content=content,
+            metadata={
+                "additional_context": additional_context,
+                "disable_auto_kb": disable_auto_kb,
+            },
         )
 
         # 记录开始时间
